@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.sentinelpulse.broker.proto";
+option java_outer_classname = "BrokerProto";
+
+service ProducerService {
+  rpc Push(stream PublishRequest) returns (PublishSummary) {}
+}
+
+message PublishRequest {
+  string channel = 1;
+  int64 ttl = 2;
+  bytes payload = 3;
+}
+
+message PublishSummary {
+  bool success = 1;
+  int32 count = 2;
+  string error_message = 3;
+}
+
+service ConsumerService {
+  rpc Pull(PullRequest) returns (stream PullResponse) {}
+}
+
+message PullRequest {
+  string channel = 1;
+  bool all_messages = 2;
+}
+
+message PullResponse {
+  string channel = 1;
+  bytes payload = 2;
+}
