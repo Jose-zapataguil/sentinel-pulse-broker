@@ -23,14 +23,14 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorS
   given Scheduler = system.scheduler
 
   override def push(in: Source[PublishRequest, NotUsed]): Future[PublishSummary] = {
-    in.map { request =>
+    in.mapAsync(1) { request =>
       val futureChannel: Future[ActorRef[ChannelProtocol.ChannelActorCommand]] =
-        manager.ask(ref => GetOrSetActorForChannel(request.channel, 0L, ref))
+        manager.ask(ref => GetOrSetActorForChannel(request.channel, request.ttl, ref))
 
       val data = request.payload.toByteArray
 
       futureChannel.flatMap(channelActor =>
-        channelActor.ask(ref => Save(request.channel, data, 0L, ref))
+        channelActor.ask(ref => Save(request.channel, data, request.ttl, ref))
       )
     }.runFold(0) { (count, result) =>
       count + 1
