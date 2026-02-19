@@ -22,4 +22,6 @@ object ChannelProtocol:
                   replyTo: ActorRef[SaveAck]
                  ) extends ChannelActorCommand
 
+  case class CleanInternalData(pointTimeMillis: Long) extends ChannelActorCommand
+
 
