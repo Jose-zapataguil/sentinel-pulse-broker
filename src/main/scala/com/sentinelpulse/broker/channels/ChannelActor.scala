@@ -1,6 +1,8 @@
 package com.sentinelpulse.broker.channels
 
-import com.sentinelpulse.broker.channels.ChannelProtocol.{Channel, ChannelActorCommand, CleanInternalData, Save, SaveSuccess}
+import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.channels.ChannelProtocol.*
+import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 import org.apache.pekko.actor.typed.scaladsl.{Behaviors, TimerScheduler}
 
@@ -10,36 +12,54 @@ object ChannelActor:
 
   opaque type ChannelData = Map[Channel, Data]
 
-  case class Data(data: Vector[Array[Byte]], insertTimestamp: Long)
+  opaque type Subscribers = Map[Channel, List[ActorRef[PullResponse]]]
+
+  private case class Data(data: Vector[Array[Byte]], insertTimestamp: Long)
 
   private case object TimerKey
 
-  def apply(): Behavior[ChannelActorCommand] = {
+  def apply(): Behavior[ChannelActorCommand] =
     Behaviors.withTimers(timers => {
       timers.startTimerWithFixedDelay(TimerKey, CleanInternalData(System.currentTimeMillis()), 500.millis)
-      channelActor(Map.empty)
+      channelActor(Map.empty, Map.empty)
     })
-  }
 
-  def channelActor(internalData: ChannelData): Behavior[ChannelActorCommand] =
+  def channelActor(internalData: ChannelData, subscribers: Subscribers): Behavior[ChannelActorCommand] =
     Behaviors.receive { (context, message) =>
       message match {
         case Save(channel, data, ttl, replyTo) =>
-          internalData.get(channel) match {
+          val pullResponse = PullResponse(channel, ByteString.copyFrom(data))
+          sendToSubscribers(subscribers.getOrElse(channel, List.empty), pullResponse)
+          val newInternalData = internalData.get(channel) match {
             case Some(value) =>
               val updatedData: Vector[Array[Byte]] = value.data :+ data
               val now = System.currentTimeMillis() + ttl
               val updatedChannel = internalData + (channel -> Data(updatedData, now))
               replyTo ! SaveSuccess
-              channelActor(updatedChannel)
+              updatedChannel
             case None =>
               val now = System.currentTimeMillis() + ttl
               val newChannel = internalData + (channel -> Data(Vector(data), now))
               replyTo ! SaveSuccess
-              channelActor(newChannel)
+              newChannel
           }
+          channelActor(newInternalData, subscribers)
+
         case CleanInternalData(pointTimeMillis) =>
           val cleanedData = internalData.filter(data => data._2.insertTimestamp >= pointTimeMillis)
-          channelActor(cleanedData)
+          channelActor(cleanedData, subscribers)
+        case Subscribe(channel, actor, sendStoredData) =>
+          val newSubscribers = subscribers(channel) :+ actor
+          val updatedSubscribers = subscribers + (channel -> newSubscribers)
+          if sendStoredData then
+            internalData.get(channel) match {
+              case Some(value) =>
+                value.data.map(d => PullResponse(channel, ByteString.copyFrom(d)))
+                  .foreach(message => actor ! message)
+            }
+          channelActor(internalData, updatedSubscribers)
       }
     }
+
+  private def sendToSubscribers(subscribers: List[ActorRef[PullResponse]], message: PullResponse): Unit =
+    subscribers.foreach(_ ! message)

@@ -1,6 +1,7 @@
 package com.sentinelpulse.broker.channels
 
 import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.ActorRef
 
 
@@ -23,5 +24,8 @@ object ChannelProtocol:
                  ) extends ChannelActorCommand
 
   case class CleanInternalData(pointTimeMillis: Long) extends ChannelActorCommand
+  
+  case class Subscribe(channel: Channel, actor: ActorRef[PullResponse], sendStoredData: Boolean) 
+    extends ChannelActorCommand
 
 
