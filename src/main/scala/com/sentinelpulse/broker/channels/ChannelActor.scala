@@ -20,7 +20,7 @@ object ChannelActor:
 
   def apply(): Behavior[ChannelActorCommand] =
     Behaviors.withTimers(timers => {
-      timers.startTimerWithFixedDelay(TimerKey, CleanInternalData(System.currentTimeMillis()), 500.millis)
+      timers.startTimerWithFixedDelay(TimerKey, CleanInternalData(System.currentTimeMillis()), 50.millis)
       channelActor(Map.empty, Map.empty)
     })
 
@@ -46,16 +46,17 @@ object ChannelActor:
           channelActor(newInternalData, subscribers)
 
         case CleanInternalData(pointTimeMillis) =>
-          val cleanedData = internalData.filter(data => data._2.insertTimestamp >= pointTimeMillis)
+          val cleanedData = internalData.filter(data => data._2.insertTimestamp <= pointTimeMillis)
           channelActor(cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
-          val newSubscribers = subscribers(channel) :+ actor
+          val newSubscribers = subscribers.getOrElse(channel, List.empty) :+ actor
           val updatedSubscribers = subscribers + (channel -> newSubscribers)
           if sendStoredData then
             internalData.get(channel) match {
               case Some(value) =>
                 value.data.map(d => PullResponse(channel, ByteString.copyFrom(d)))
                   .foreach(message => actor ! message)
+              case None =>
             }
           channelActor(internalData, updatedSubscribers)
       }
