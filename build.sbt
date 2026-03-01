@@ -16,6 +16,7 @@ lazy val root = (project in file("."))
       "org.apache.pekko" %% "pekko-actor-typed" % pekkoVersion,
       "org.apache.pekko" %% "pekko-stream-typed" % pekkoVersion,
       "org.apache.pekko" %% "pekko-grpc-runtime" % pekkoGrpcVersion,
+      "org.apache.pekko" %% "pekko-discovery" % pekkoVersion,
 
       "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
       "org.scalatest" %% "scalatest" % "3.2.19" % Test
