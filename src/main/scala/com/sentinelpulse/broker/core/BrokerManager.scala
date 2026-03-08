@@ -2,7 +2,6 @@ package com.sentinelpulse.broker.core
 
 import com.sentinelpulse.broker.channels.ChannelActor
 import com.sentinelpulse.broker.channels.ChannelProtocol.{Channel, ChannelActorCommand, Subscribe}
-import com.sentinelpulse.broker.core.BrokerManager.ActorForChannel
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
@@ -15,18 +14,21 @@ object BrokerManager:
 
   case class AddSubscriber(channelName: Channel, subscriber: ActorRef[PullResponse], sendStoredData: Boolean = false) extends BrokerCommand
 
-  case class ActorForChannel(actor: ActorRef[ChannelActorCommand], channelMetadata: Map[Channel, Option[Long]])
+  case class ActorForChannels(actor: ActorRef[ChannelActorCommand], channelMetadata: Map[Channel, Metadata])
 
+  case class Metadata(ttl: Long, numberOfSubscribers: Int)
+
+  private val DEFAULT_TTL_TIME = 1000L
 
   def apply(numberOfActors: Int): Behavior[BrokerCommand] = Behaviors.setup { context =>
-    val channelActors = 0 to numberOfActors map { n =>
+    val channelActors = 0 until numberOfActors map { n =>
       val actor = context.spawn(ChannelActor(), s"actor$n")
-      ActorForChannel(actor, Map.empty)
+      ActorForChannels(actor, Map.empty)
     }
     brokerManager(channelActors.toList)
   }
 
-  def brokerManager(channelActors: List[ActorForChannel]): Behavior[BrokerCommand] =
+  def brokerManager(channelActors: List[ActorForChannels]): Behavior[BrokerCommand] =
     Behaviors.receive { (context, message) =>
       message match {
         case GetOrSetActorForChannel(channel, ttl, client) =>
@@ -36,10 +38,12 @@ object BrokerManager:
               client ! metadata.actor
               brokerManager(channelActors)
             case None =>
-              val (lessLoadedActor: ActorForChannel, newChannelActors: List[ActorForChannel]) =
-                getLessLoadedActorAndUpdated(channelActors, channel, Some(ttl))
+              val (lessLoadedActor: ActorForChannels, restChannelActors: List[ActorForChannels]) =
+                getLessLoadedActorAndRest(channelActors)
               client ! lessLoadedActor.actor
-              brokerManager(newChannelActors)
+              val newChannel = lessLoadedActor.channelMetadata + (channel -> Metadata(DEFAULT_TTL_TIME, 0))
+              val updatedChannelActors = ActorForChannels(lessLoadedActor.actor, newChannel) :: restChannelActors
+              brokerManager(updatedChannelActors)
           }
 
         case AddSubscriber(channelName, subscriber, sendStoredData) =>
@@ -47,23 +51,29 @@ object BrokerManager:
           actorMetadata match {
             case Some(value) =>
               value.actor ! Subscribe(channelName, subscriber, sendStoredData)
-              brokerManager(channelActors)
+              val restChannelActors = channelActors.filter(_.actor != value.actor)
+              val metadata = value.channelMetadata(channelName)
+              val updatedMetadata = value.channelMetadata + (channelName -> Metadata(metadata.ttl, metadata.numberOfSubscribers + 1))
+              val updatedChannelActors = ActorForChannels(value.actor, updatedMetadata) :: restChannelActors
+              brokerManager(updatedChannelActors)
             case None =>
-              val (lessLoadedActor: ActorForChannel, newChannelActors: List[ActorForChannel]) =
-                getLessLoadedActorAndUpdated(channelActors, channelName, None)
+              val (lessLoadedActor: ActorForChannels, restChannelActors: List[ActorForChannels]) = getLessLoadedActorAndRest(channelActors)
+              val updatedMetadata = lessLoadedActor.channelMetadata + (channelName -> Metadata(DEFAULT_TTL_TIME, 1))
+              val updatedChannelActors = ActorForChannels(lessLoadedActor.actor, updatedMetadata) :: restChannelActors
               lessLoadedActor.actor ! Subscribe(channelName, subscriber, sendStoredData)
-              brokerManager(newChannelActors)
+              brokerManager(updatedChannelActors)
           }
       }
     }
 
-  private[core] def getLessLoadedActorAndUpdated(channelActors: List[ActorForChannel],
-                                                 channelName: Channel,
-                                                 ttl: Option[Long]): (ActorForChannel, List[ActorForChannel]) =
+  private[core] def getLessLoadedActorAndRest(channelActors: List[ActorForChannels]): (ActorForChannels, List[ActorForChannels]) =
 
-    val lessLoadedActor = channelActors.minBy(_.channelMetadata.size)
-    val updatedMetadata = lessLoadedActor.channelMetadata + (channelName -> None)
-    val newChannelActors = channelActors.tail :+ ActorForChannel(lessLoadedActor.actor, updatedMetadata)
-    (lessLoadedActor, newChannelActors)
+    val lessLoadedActor = channelActors.map { actorForChannels => 
+      val nOfChannelsByActor = actorForChannels.channelMetadata.size
+      val nOfTotalSubscribers = actorForChannels.channelMetadata.map(_._2.numberOfSubscribers).sum
+      (actorForChannels, nOfTotalSubscribers + nOfChannelsByActor)
+    }.minBy(_._2)._1
+    val restOfActors = channelActors.filter(_.actor != lessLoadedActor.actor)
+    (lessLoadedActor, restOfActors)
   
 
