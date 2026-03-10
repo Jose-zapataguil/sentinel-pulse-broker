@@ -3,7 +3,7 @@ package com.sentinelpulse.broker.channels
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelProtocol.*
 import com.sentinelpulse.broker.proto.PullResponse
-import org.apache.pekko.actor.typed.{ActorRef, Behavior}
+import org.apache.pekko.actor.typed.{ActorRef, Behavior, Terminated}
 import org.apache.pekko.actor.typed.scaladsl.{Behaviors, TimerScheduler}
 
 import scala.concurrent.duration.DurationInt
@@ -25,7 +25,7 @@ object ChannelActor:
     })
 
   def channelActor(internalData: ChannelData, subscribers: Subscribers): Behavior[ChannelActorCommand] =
-    Behaviors.receive { (context, message) =>
+    Behaviors.receive[ChannelActorCommand] { (context, message) =>
       message match {
         case Save(channel, data, ttl, replyTo) =>
           val pullResponse = PullResponse(channel, ByteString.copyFrom(data))
@@ -49,6 +49,7 @@ object ChannelActor:
           val cleanedData = internalData.filter(data => data._2.insertTimestamp <= pointTimeMillis)
           channelActor(cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
+          context.watch(actor)
           val newSubscribers = subscribers.getOrElse(channel, List.empty) :+ actor
           val updatedSubscribers = subscribers + (channel -> newSubscribers)
           if sendStoredData then
@@ -60,6 +61,10 @@ object ChannelActor:
             }
           channelActor(internalData, updatedSubscribers)
       }
+    }.receiveSignal {
+      case (context, Terminated(deadActor)) =>
+        val updatedSubscribers = subscribers.filter(_ != deadActor)
+        channelActor(internalData, updatedSubscribers)
     }
 
   private def sendToSubscribers(subscribers: List[ActorRef[PullResponse]], message: PullResponse): Unit =
