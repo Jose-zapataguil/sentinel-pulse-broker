@@ -2,17 +2,17 @@ package com.sentinelpulse.broker.channels
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelProtocol.*
+import com.sentinelpulse.broker.core.BrokerManager.SubscriberCount
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.{ActorRef, Behavior, Terminated}
-import org.apache.pekko.actor.typed.scaladsl.{Behaviors, TimerScheduler}
-
+import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import scala.concurrent.duration.DurationInt
 
 object ChannelActor:
 
   opaque type ChannelData = Map[Channel, Data]
 
-  opaque type Subscribers = Map[Channel, List[ActorRef[PullResponse]]]
+  opaque type Subscribers = Map[ActorRef[PullResponse], Channel]
 
   private case class Data(data: Vector[Array[Byte]], insertTimestamp: Long)
 
@@ -29,7 +29,7 @@ object ChannelActor:
       message match {
         case Save(channel, data, ttl, replyTo) =>
           val pullResponse = PullResponse(channel, ByteString.copyFrom(data))
-          sendToSubscribers(subscribers.getOrElse(channel, List.empty), pullResponse)
+          sendToSubscribers(subscribers.filter(_._2 == channel).keys.toList, pullResponse)
           val newInternalData = internalData.get(channel) match {
             case Some(value) =>
               val updatedData: Vector[Array[Byte]] = value.data :+ data
@@ -50,8 +50,7 @@ object ChannelActor:
           channelActor(cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
           context.watch(actor)
-          val newSubscribers = subscribers.getOrElse(channel, List.empty) :+ actor
-          val updatedSubscribers = subscribers + (channel -> newSubscribers)
+          val updatedSubscribers = subscribers + (actor -> channel)
           if sendStoredData then
             internalData.get(channel) match {
               case Some(value) =>
@@ -60,10 +59,14 @@ object ChannelActor:
               case None =>
             }
           channelActor(internalData, updatedSubscribers)
+        case GetSubscriberCount(replyTo) =>
+          replyTo ! SubscriberCount(subscribers.size, context.self)
+          channelActor(internalData, subscribers)
       }
     }.receiveSignal {
       case (context, Terminated(deadActor)) =>
-        val updatedSubscribers = subscribers.filter(_ != deadActor)
+        val typedDeadActor = deadActor.asInstanceOf[ActorRef[PullResponse]]
+        val updatedSubscribers = subscribers - typedDeadActor
         channelActor(internalData, updatedSubscribers)
     }
 

@@ -1,6 +1,6 @@
 package com.sentinelpulse.broker.channels
 
-import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.core.BrokerManager.SubscriberCount
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.ActorRef
 
@@ -27,5 +27,7 @@ object ChannelProtocol:
   
   case class Subscribe(channel: Channel, actor: ActorRef[PullResponse], sendStoredData: Boolean) 
     extends ChannelActorCommand
+
+  case class GetSubscriberCount(replyTo: ActorRef[SubscriberCount]) extends ChannelActorCommand
 
 

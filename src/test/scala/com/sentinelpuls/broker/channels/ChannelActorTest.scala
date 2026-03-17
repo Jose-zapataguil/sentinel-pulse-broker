@@ -2,9 +2,11 @@ package com.sentinelpuls.broker.channels
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelActor
-import com.sentinelpulse.broker.channels.ChannelProtocol.{Save, SaveAck, SaveSuccess, Subscribe}
+import com.sentinelpulse.broker.channels.ChannelProtocol.{GetSubscriberCount, Save, SaveAck, SaveSuccess, Subscribe}
+import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, SubscriberCount}
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.testkit.typed.scaladsl.{ActorTestKit, ManualTime}
+import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
@@ -84,6 +86,30 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       channelActor ! Subscribe("test", subscriber.ref, true)
 
       subscriber.expectNoMessage()
+    }
+
+
+    "remove the subscriber from its internal state when it dies" in {
+      val channelActor = testKit.spawn(ChannelActor())
+
+      val subscriber1 = testKit.spawn(Behaviors.ignore[PullResponse])
+      val subscriber2 = testKit.createTestProbe[PullResponse]()
+
+      val manager = testKit.createTestProbe[BrokerCommand]()
+
+      channelActor ! Subscribe("test", subscriber1.ref, false)
+      channelActor ! Subscribe("test", subscriber2.ref, false)
+
+      channelActor ! GetSubscriberCount(manager.ref)
+      manager.expectMessage(SubscriberCount(2, channelActor.ref))
+
+      testKit.stop(subscriber1.ref)
+
+      Thread.sleep(100)
+
+      channelActor ! GetSubscriberCount(manager.ref)
+
+      manager.expectMessage(SubscriberCount(1, channelActor.ref))
     }
   }
 
