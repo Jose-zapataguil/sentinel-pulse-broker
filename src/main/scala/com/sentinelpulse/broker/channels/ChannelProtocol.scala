@@ -28,6 +28,4 @@ object ChannelProtocol:
   case class Subscribe(channel: Channel, actor: ActorRef[PullResponse], sendStoredData: Boolean) 
     extends ChannelActorCommand
 
-  case class GetSubscriberCount(replyTo: ActorRef[SubscriberCount]) extends ChannelActorCommand
-
 

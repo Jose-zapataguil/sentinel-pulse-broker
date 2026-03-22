@@ -77,5 +77,7 @@ class BrokerManagerTest extends AnyWordSpecLike with Matchers with BeforeAndAfte
 
       actor1 should not be actor2
     }
+    
+    
 
   }

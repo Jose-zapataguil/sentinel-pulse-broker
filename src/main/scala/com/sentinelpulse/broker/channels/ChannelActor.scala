@@ -2,10 +2,11 @@ package com.sentinelpulse.broker.channels
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelProtocol.*
-import com.sentinelpulse.broker.core.BrokerManager.SubscriberCount
+import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, SubscriberCount}
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.{ActorRef, Behavior, Terminated}
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
+
 import scala.concurrent.duration.DurationInt
 
 object ChannelActor:
@@ -18,9 +19,12 @@ object ChannelActor:
 
   private case object TimerKey
 
-  def apply(): Behavior[ChannelActorCommand] =
+  private var manager: ActorRef[BrokerCommand] = _
+
+  def apply(managerRef: ActorRef[BrokerCommand]): Behavior[ChannelActorCommand] =
     Behaviors.withTimers(timers => {
       timers.startTimerWithFixedDelay(TimerKey, CleanInternalData(System.currentTimeMillis()), 50.millis)
+      manager = managerRef
       channelActor(Map.empty, Map.empty)
     })
 
@@ -51,24 +55,27 @@ object ChannelActor:
         case Subscribe(channel, actor, sendStoredData) =>
           context.watch(actor)
           val updatedSubscribers = subscribers + (actor -> channel)
-          if sendStoredData then
+          if sendStoredData then {
             internalData.get(channel) match {
               case Some(value) =>
                 value.data.map(d => PullResponse(channel, ByteString.copyFrom(d)))
                   .foreach(message => actor ! message)
               case None =>
             }
+          }
+          notifyManager(updatedSubscribers.size, context.self)
           channelActor(internalData, updatedSubscribers)
-        case GetSubscriberCount(replyTo) =>
-          replyTo ! SubscriberCount(subscribers.size, context.self)
-          channelActor(internalData, subscribers)
       }
     }.receiveSignal {
       case (context, Terminated(deadActor)) =>
         val typedDeadActor = deadActor.asInstanceOf[ActorRef[PullResponse]]
         val updatedSubscribers = subscribers - typedDeadActor
+        notifyManager(updatedSubscribers.size, context.self)
         channelActor(internalData, updatedSubscribers)
     }
+
+  def notifyManager(count: Int, selfRef: ActorRef[ChannelActorCommand]): Unit =
+    manager ! SubscriberCount(count, selfRef)
 
   private def sendToSubscribers(subscribers: List[ActorRef[PullResponse]], message: PullResponse): Unit =
     subscribers.foreach(_ ! message)

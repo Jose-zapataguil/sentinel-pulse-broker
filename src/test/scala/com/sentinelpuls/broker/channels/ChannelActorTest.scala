@@ -2,7 +2,7 @@ package com.sentinelpuls.broker.channels
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelActor
-import com.sentinelpulse.broker.channels.ChannelProtocol.{GetSubscriberCount, Save, SaveAck, SaveSuccess, Subscribe}
+import com.sentinelpulse.broker.channels.ChannelProtocol.{Save, SaveAck, SaveSuccess, Subscribe}
 import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, SubscriberCount}
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.testkit.typed.scaladsl.{ActorTestKit, ManualTime}
@@ -10,7 +10,6 @@ import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
-
 import scala.concurrent.duration.DurationInt
 
 class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Matchers:
@@ -20,7 +19,8 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
 
   "A channel actor" should {
     "return a SaveSuccess message when a Save message is sent" in {
-      val channelActor = testKit.spawn(ChannelActor())
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager))
       val probe = testKit.createTestProbe[SaveAck]()
 
       channelActor ! Save("test", Array(), 1000L, probe.ref)
@@ -29,7 +29,9 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
     }
 
     "return a PullResponse message when an actor is subscribed and a new message is saved" in {
-      val channelActor = testKit.spawn(ChannelActor())
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+
+      val channelActor = testKit.spawn(ChannelActor(manager))
       val testDataByte = "Test".getBytes
 
       val producer = testKit.createTestProbe[SaveAck]()
@@ -46,7 +48,9 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
     }
 
     "return all PullResponse messages stores in the channel when the subscriber sends the sendStoredData flag" in {
-      val channelActor = testKit.spawn(ChannelActor())
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+
+      val channelActor = testKit.spawn(ChannelActor(manager))
       val oneTestDataByte = "Test".getBytes
       val twoTestDataByte = Array(123.toByte)
 
@@ -68,7 +72,9 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
     }
 
     "clean the stored messages when the TTL is passed" in {
-      val channelActor = testKit.spawn(ChannelActor())
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+
+      val channelActor = testKit.spawn(ChannelActor(manager))
       val oneTestDataByte = "Test".getBytes
       val twoTestDataByte = Array(123.toByte)
 
@@ -90,25 +96,24 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
 
 
     "remove the subscriber from its internal state when it dies" in {
-      val channelActor = testKit.spawn(ChannelActor())
+      val manager = testKit.createTestProbe[BrokerCommand]()
+      val channelActor = testKit.spawn(ChannelActor(manager.ref))
 
       val subscriber1 = testKit.spawn(Behaviors.ignore[PullResponse])
       val subscriber2 = testKit.createTestProbe[PullResponse]()
 
-      val manager = testKit.createTestProbe[BrokerCommand]()
 
       channelActor ! Subscribe("test", subscriber1.ref, false)
       channelActor ! Subscribe("test", subscriber2.ref, false)
 
-      channelActor ! GetSubscriberCount(manager.ref)
+      Thread.sleep(100)
+      manager.expectMessage(SubscriberCount(1, channelActor.ref))
       manager.expectMessage(SubscriberCount(2, channelActor.ref))
 
       testKit.stop(subscriber1.ref)
 
       Thread.sleep(100)
-
-      channelActor ! GetSubscriberCount(manager.ref)
-
+      
       manager.expectMessage(SubscriberCount(1, channelActor.ref))
     }
   }
