@@ -14,7 +14,7 @@ import org.apache.pekko.util.Timeout
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.DurationInt
 
-class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorSystem[_]) extends ProducerService:
+class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorSystem[Nothing]) extends ProducerService:
 
   given timeout: Timeout = 2.seconds
 
