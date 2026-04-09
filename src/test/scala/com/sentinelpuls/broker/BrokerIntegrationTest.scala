@@ -25,6 +25,9 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
   var serverBinding: ServerBinding = _
   var producerClient: ProducerServiceClient = _
   var consumerClient: ConsumerServiceClient = _
+  
+  val ip = "127.0.0.1"
+  val port = 8080
 
   override def beforeAll(): Unit =
     super.beforeAll()
@@ -33,7 +36,7 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
 
     given ActorSystem[Nothing] = system
 
-    val grpcServer = new BrokerServer(manager)
+    val grpcServer = new BrokerServer(manager, ip, port)
     serverBinding = Await.result(grpcServer.run(), 5.seconds)
 
     val clientSettings = GrpcClientSettings

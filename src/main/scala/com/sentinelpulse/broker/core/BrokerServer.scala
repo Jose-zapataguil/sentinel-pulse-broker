@@ -8,7 +8,7 @@ import org.apache.pekko.grpc.scaladsl.{ServerReflection, ServiceHandler}
 import org.apache.pekko.http.scaladsl.Http
 import scala.concurrent.Future
 
-class BrokerServer(manager: ActorRef[BrokerCommand])(using system: ActorSystem[Nothing]):
+class BrokerServer(manager: ActorRef[BrokerCommand], ip: String, port: Int)(using system: ActorSystem[Nothing]):
 
   def run(): Future[Http.ServerBinding] =
 
@@ -19,7 +19,7 @@ class BrokerServer(manager: ActorRef[BrokerCommand])(using system: ActorSystem[N
     val serviceHandlers = ServiceHandler.concatOrNotFound(producerService, consumerService, reflectionService)
 
     Http()
-      .newServerAt("127.0.0.1", 8080)
+      .newServerAt(ip, port)
       .bind(serviceHandlers)
 
 end BrokerServer

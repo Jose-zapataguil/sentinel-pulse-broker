@@ -1,18 +1,19 @@
 package com.sentinelpulse.broker.core
 
+import com.sentinelpulse.broker.config.BrokerParameters
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.actor.typed.{ActorSystem, Behavior}
 
 object BrokerGuardian:
 
-  def apply(): Behavior[Nothing] = Behaviors.setup[Nothing] { context =>
+  def apply(brokerParameters: BrokerParameters): Behavior[Nothing] = Behaviors.setup[Nothing] { context =>
     context.log.info("Starting broker")
 
-    val manager = context.spawn(BrokerManager(8), "broker-manager")
+    val manager = context.spawn(BrokerManager(brokerParameters.nOfActors), "broker-manager")
 
     given ActorSystem[Nothing] = context.system
 
-    val grpcServer = new BrokerServer(manager)
+    val grpcServer = new BrokerServer(manager, brokerParameters.ip, brokerParameters.port)
     grpcServer.run()
 
     Behaviors.empty
