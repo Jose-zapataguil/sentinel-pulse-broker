@@ -34,41 +34,46 @@ object BrokerManager:
     Behaviors.receive { (context, message) =>
       message match {
         case GetOrSetActorForChannel(channel, ttl, client) =>
-          val actorMetadata = channelActors.find(_.channelMetadata.contains(channel))
-          actorMetadata match {
+          channelActors.find(_.channelMetadata.contains(channel)) match {
             case Some(metadata) =>
               client ! metadata.actor
-              brokerManager(channelActors)
+              Behaviors.same
+
             case None =>
-              val (lessLoadedActor: ActorForChannels, restChannelActors: List[ActorForChannels]) =
-                getLessLoadedActorAndRest(channelActors)
+              val (lessLoadedActor, restChannelActors) = getLessLoadedActorAndRest(channelActors)
               client ! lessLoadedActor.actor
-              val newChannel = lessLoadedActor.channelMetadata + (channel -> Metadata(DEFAULT_TTL_TIME))
-              val updatedChannelActors = ActorForChannels(lessLoadedActor.actor, newChannel, 0) :: restChannelActors
-              brokerManager(updatedChannelActors)
+
+              val updatedChannelActors = lessLoadedActor.copy(
+                channelMetadata = lessLoadedActor.channelMetadata + (channel -> Metadata(ttl))
+              )
+              brokerManager(updatedChannelActors :: restChannelActors)
           }
 
         case AddSubscriber(channelName, subscriber, sendStoredData) =>
-          val actorMetadata = channelActors.find(_.channelMetadata.contains(channelName))
-          actorMetadata match {
+          channelActors.find(_.channelMetadata.contains(channelName)) match {
             case Some(value) =>
               value.actor ! Subscribe(channelName, subscriber, sendStoredData)
-              val restChannelActors = channelActors.filter(_.actor != value.actor)
-              val metadata = value.channelMetadata(channelName)
-              val updatedMetadata = value.channelMetadata + (channelName -> Metadata(metadata.ttl))
-              val updatedChannelActors = ActorForChannels(value.actor, updatedMetadata, value.numberOfSubscribers + 1) :: restChannelActors
+              val updatedChannelActors = channelActors.map {
+                case a if a.actor == value.actor =>
+                  a.copy(numberOfSubscribers = a.numberOfSubscribers + 1)
+                case a => a
+              }
               brokerManager(updatedChannelActors)
             case None =>
-              val (lessLoadedActor: ActorForChannels, restChannelActors: List[ActorForChannels]) = getLessLoadedActorAndRest(channelActors)
-              val updatedMetadata = lessLoadedActor.channelMetadata + (channelName -> Metadata(DEFAULT_TTL_TIME))
-              val updatedChannelActors = ActorForChannels(lessLoadedActor.actor, updatedMetadata, 1) :: restChannelActors
+              val (lessLoadedActor, restChannelActors) = getLessLoadedActorAndRest(channelActors)
               lessLoadedActor.actor ! Subscribe(channelName, subscriber, sendStoredData)
-              brokerManager(updatedChannelActors)
+
+              val updatedActor = lessLoadedActor.copy(
+                channelMetadata = lessLoadedActor.channelMetadata + (channelName -> Metadata(DEFAULT_TTL_TIME)),
+                numberOfSubscribers = lessLoadedActor.numberOfSubscribers + 1
+              )
+              brokerManager(updatedActor :: restChannelActors)
           }
-        case SubscriberCount(count, actor) =>
-          val actorForChannel = channelActors.find(_.actor == actor).get
-          val restChannelActors = channelActors.filterNot(_.actor == actor)
-          val updatedChannelActors = ActorForChannels(actorForChannel.actor, actorForChannel.channelMetadata, count) :: restChannelActors
+        case SubscriberCount(count, targetActor) =>
+          val updatedChannelActors = channelActors.map {
+            case a if a.actor == targetActor => a.copy(numberOfSubscribers = count)
+            case a => a
+          }
           brokerManager(updatedChannelActors)
       }
     }
