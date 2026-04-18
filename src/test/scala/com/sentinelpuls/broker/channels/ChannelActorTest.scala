@@ -60,6 +60,10 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       channelActor ! Save("test", oneTestDataByte, 10000L, producer.ref)
       channelActor ! Save("test", twoTestDataByte, 10000L, producer.ref)
 
+      val manualTime = ManualTime()(testKit.system)
+
+      manualTime.timePasses(100.millis)
+
       channelActor ! Subscribe("test", subscriber.ref, true)
 
       producer.expectMessage(SaveSuccess)

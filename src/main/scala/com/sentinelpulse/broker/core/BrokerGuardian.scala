@@ -15,7 +15,9 @@ object BrokerGuardian:
 
     val grpcServer = new BrokerServer(manager, brokerParameters.ip, brokerParameters.port)
     grpcServer.run()
-
+    
+    context.log.info(s"Started broker at ip ${brokerParameters.ip} in port ${brokerParameters.port}")
+    
     Behaviors.empty
   }
 

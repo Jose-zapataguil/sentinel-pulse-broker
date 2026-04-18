@@ -50,7 +50,7 @@ object ChannelActor:
           channelActor(newInternalData, subscribers)
 
         case CleanInternalData(pointTimeMillis) =>
-          val cleanedData = internalData.filter(data => data._2.insertTimestamp <= pointTimeMillis)
+          val cleanedData = internalData.filter(data => data._2.insertTimestamp >= pointTimeMillis)
           channelActor(cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
           context.watch(actor)
@@ -58,9 +58,11 @@ object ChannelActor:
           if sendStoredData then {
             internalData.get(channel) match {
               case Some(value) =>
+                context.log.info(s"Sending ${value.data.size} messages stored")
                 value.data.map(d => PullResponse(channel, ByteString.copyFrom(d)))
                   .foreach(message => actor ! message)
               case None =>
+                context.log.info(s"No data stored for channel '$channel'")
             }
           }
           notifyManager(updatedSubscribers.size, context.self)
