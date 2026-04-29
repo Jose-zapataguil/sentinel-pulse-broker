@@ -2,14 +2,16 @@ package com.sentinelpuls.broker
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.core.{BrokerManager, BrokerServer}
-import com.sentinelpulse.broker.proto.{ConsumerServiceClient, ProducerServiceClient, PublishRequest, PullRequest, PullResponse}
+import com.sentinelpulse.broker.proto.PublishRequest.Payload
+import com.sentinelpulse.broker.proto.PublishRequest.Payload.Data
+import com.sentinelpulse.broker.proto.{ConsumerServiceClient, ProducerServiceClient, PublishMetadata, PublishRequest, PullRequest, PullResponse}
 import com.typesafe.config.ConfigFactory
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.GrpcClientSettings
 import org.apache.pekko.http.scaladsl.Http.ServerBinding
-import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.stream.testkit.scaladsl.TestSink
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.wordspec.AnyWordSpecLike
@@ -67,9 +69,20 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
 
       streamProbe.request(1)
 
-      val pubRequest = PublishRequest(testChannel, 1000L, testPayload)
-      val producerStream = Source.tick(initialDelay = 0.millis, interval = 100.millis, pubRequest)
-        .mapMaterializedValue(_ => NotUsed)
+      val publishMetadata = PublishRequest(
+        Payload.Metadata(
+          PublishMetadata(testChannel, 1000L)
+        ))
+
+      val metadataSource = Source.single(publishMetadata)
+
+      val publishData = PublishRequest(Data(testPayload))
+      
+      val dataSource = Source.tick(initialDelay = 0.millis, interval = 100.millis, "tick")
+        .map(_ => publishData).take(10)
+
+
+      val producerStream = metadataSource.concat(dataSource)
 
       producerClient.push(producerStream)
 
