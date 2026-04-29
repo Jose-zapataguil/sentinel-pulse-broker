@@ -7,11 +7,16 @@ option java_outer_classname = "BrokerProto";
 service ProducerService {
   rpc Push(stream PublishRequest) returns (PublishSummary) {}
 }
-
 message PublishRequest {
+  oneof payload {
+    PublishMetadata metadata = 1;
+    bytes data = 2;
+  }
+
+}
+message PublishMetadata {
   string channel = 1;
   int64 ttl = 2;
-  bytes payload = 3;
 }
 
 message PublishSummary {

@@ -3,7 +3,8 @@ package com.sentinelpuls.broker.api
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.api.ProducerServiceImpl
 import com.sentinelpulse.broker.core.BrokerManager
-import com.sentinelpulse.broker.proto.PublishRequest
+import com.sentinelpulse.broker.proto.{PublishMetadata, PublishRequest}
+import com.sentinelpulse.broker.proto.PublishRequest.Payload.{Data, Metadata}
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.stream.scaladsl.Source
@@ -26,11 +27,17 @@ class ProducerServiceImplTest extends AnyWordSpecLike with Matchers:
 
       val producerService = new ProducerServiceImpl(manager)
 
-      val payloadTest = ByteString.copyFromUtf8("TEST")
+      val payloadTest1 = ByteString.copyFromUtf8("TEST")
+      val payloadTest2 = ByteString.copyFromUtf8("test")
+      
       val source = Source(
         List(
-          PublishRequest("test", 1000L, payloadTest),
-          PublishRequest("test2", 10000L, payloadTest)
+          PublishRequest(
+            Metadata(PublishMetadata("test1", 1000L))
+          ),
+          PublishRequest(Data(payloadTest1)),
+          PublishRequest(Data(payloadTest2)),
+
         )
       )
       val future = producerService.push(source)

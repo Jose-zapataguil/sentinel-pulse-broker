@@ -23,19 +23,30 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorS
   given Scheduler = system.scheduler
 
   override def push(in: Source[PublishRequest, NotUsed]): Future[PublishSummary] = {
-    in.mapAsync(1) { request =>
-      val futureChannel: Future[ActorRef[ChannelProtocol.ChannelActorCommand]] =
-        manager.ask(ref => GetOrSetActorForChannel(request.channel, request.ttl, ref))
-
-      val data = request.payload.toByteArray
-
-      futureChannel.flatMap(channelActor =>
-        channelActor.ask(ref => Save(request.channel, data, request.ttl, ref))
-      )
-    }.runFold(0) { (count, result) =>
-      count + 1
-    }.map(total => PublishSummary(success = true, count = total))
-    
+    in.prefixAndTail(1).runWith(Sink.head)
+      .flatMap {
+        case (head, tail) =>
+          head.headOption.flatMap(_.payload.metadata) match {
+            case Some(value) =>
+              val futureChannel: Future[ActorRef[ChannelProtocol.ChannelActorCommand]] = {
+                manager.ask(ref => GetOrSetActorForChannel(value.channel, value.ttl, ref))
+              }
+              futureChannel.flatMap { channelActor =>
+                tail
+                  .map(request => request.payload.data.map(_.toByteArray))
+                  .collect {
+                    case Some(bytes) => bytes
+                  }
+                  .mapAsync(1) { bytes =>
+                    channelActor.ask(ref => Save(value.channel, bytes, value.ttl, ref))
+                  }.runFold(0) { (count, result) =>
+                    count + 1
+                  }.map(total => PublishSummary(success = true, count = total))
+              }
+            case None =>
+              Future.failed(new IllegalArgumentException("The first message should contains the metadata (channel and ttl)"))
+          }
+      }
   }
     
 
