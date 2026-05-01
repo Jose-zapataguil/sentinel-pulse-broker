@@ -15,43 +15,39 @@ object ChannelActor:
 
   opaque type Subscribers = Map[ActorRef[PullResponse], Channel]
 
-  private case class Data(data: Vector[Array[Byte]], insertTimestamp: Long)
+  private case class Data(data: Vector[Array[Byte]], limitMillis: Long)
 
   private case object TimerKey
 
-  private var manager: ActorRef[BrokerCommand] = _
-
   def apply(managerRef: ActorRef[BrokerCommand]): Behavior[ChannelActorCommand] =
     Behaviors.withTimers(timers => {
-      timers.startTimerWithFixedDelay(TimerKey, CleanInternalData(System.currentTimeMillis()), 50.millis)
-      manager = managerRef
-      channelActor(Map.empty, Map.empty)
+      timers.startTimerWithFixedDelay(TimerKey, CleanInternalData, 50.millis)
+      channelActor(managerRef, Map.empty, Map.empty)
     })
 
-  def channelActor(internalData: ChannelData, subscribers: Subscribers): Behavior[ChannelActorCommand] =
+  def channelActor(managerRef: ActorRef[BrokerCommand], internalData: ChannelData, subscribers: Subscribers): Behavior[ChannelActorCommand] =
     Behaviors.receive[ChannelActorCommand] { (context, message) =>
       message match {
         case Save(channel, data, ttl, replyTo) =>
           val pullResponse = PullResponse(channel, ByteString.copyFrom(data))
-          sendToSubscribers(subscribers.filter(_._2 == channel).keys.toList, pullResponse)
-          val newInternalData = internalData.get(channel) match {
-            case Some(value) =>
-              val updatedData: Vector[Array[Byte]] = value.data :+ data
-              val now = System.currentTimeMillis() + ttl
-              val updatedChannel = internalData + (channel -> Data(updatedData, now))
-              replyTo ! SaveSuccess
-              updatedChannel
-            case None =>
-              val now = System.currentTimeMillis() + ttl
-              val newChannel = internalData + (channel -> Data(Vector(data), now))
-              replyTo ! SaveSuccess
-              newChannel
-          }
-          channelActor(newInternalData, subscribers)
 
-        case CleanInternalData(pointTimeMillis) =>
-          val cleanedData = internalData.filter(data => data._2.insertTimestamp >= pointTimeMillis)
-          channelActor(cleanedData, subscribers)
+          subscribers.collect { case (ref, `channel`) => ref}
+            .foreach(_ ! pullResponse)
+
+          val expirationTimeMillis = System.currentTimeMillis() + ttl
+
+          val newInternalData = internalData.updatedWith(channel){
+            case Some(value) => Some(Data(value.data :+ data, expirationTimeMillis))
+            case None => Some(Data(Vector(data), expirationTimeMillis))
+          }
+
+          replyTo ! SaveSuccess
+          channelActor(managerRef, newInternalData, subscribers)
+
+        case CleanInternalData =>
+          val now = System.currentTimeMillis()
+          val cleanedData = internalData.filter(data => data._2.limitMillis >= now)
+          channelActor(managerRef, cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
           context.watch(actor)
           val updatedSubscribers = subscribers + (actor -> channel)
@@ -59,25 +55,20 @@ object ChannelActor:
             internalData.get(channel) match {
               case Some(value) =>
                 context.log.info(s"Sending ${value.data.size} messages stored")
-                value.data.map(d => PullResponse(channel, ByteString.copyFrom(d)))
-                  .foreach(message => actor ! message)
+                value.data.foreach(message =>
+                  actor ! PullResponse(channel, ByteString.copyFrom(message))
+                )
               case None =>
                 context.log.info(s"No data stored for channel '$channel'")
             }
           }
-          notifyManager(updatedSubscribers.size, context.self)
-          channelActor(internalData, updatedSubscribers)
+          managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
+          channelActor(managerRef, internalData, updatedSubscribers)
       }
     }.receiveSignal {
       case (context, Terminated(deadActor)) =>
-        val typedDeadActor = deadActor.asInstanceOf[ActorRef[PullResponse]]
+        val typedDeadActor = deadActor.unsafeUpcast[PullResponse]
         val updatedSubscribers = subscribers - typedDeadActor
-        notifyManager(updatedSubscribers.size, context.self)
-        channelActor(internalData, updatedSubscribers)
+        managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
+        channelActor(managerRef, internalData, updatedSubscribers)
     }
-
-  def notifyManager(count: Int, selfRef: ActorRef[ChannelActorCommand]): Unit =
-    manager ! SubscriberCount(count, selfRef)
-
-  private def sendToSubscribers(subscribers: List[ActorRef[PullResponse]], message: PullResponse): Unit =
-    subscribers.foreach(_ ! message)

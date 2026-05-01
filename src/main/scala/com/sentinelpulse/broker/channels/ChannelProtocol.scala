@@ -1,6 +1,5 @@
 package com.sentinelpulse.broker.channels
 
-import com.sentinelpulse.broker.core.BrokerManager.SubscriberCount
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.ActorRef
 
@@ -23,7 +22,7 @@ object ChannelProtocol:
                   replyTo: ActorRef[SaveAck]
                  ) extends ChannelActorCommand
 
-  case class CleanInternalData(pointTimeMillis: Long) extends ChannelActorCommand
+  case object CleanInternalData extends ChannelActorCommand
   
   case class Subscribe(channel: Channel, actor: ActorRef[PullResponse], sendStoredData: Boolean) 
     extends ChannelActorCommand

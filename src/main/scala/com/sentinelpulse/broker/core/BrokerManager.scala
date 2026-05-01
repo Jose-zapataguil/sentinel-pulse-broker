@@ -34,6 +34,7 @@ object BrokerManager:
     Behaviors.receive { (context, message) =>
       message match {
         case GetOrSetActorForChannel(channel, ttl, client) =>
+          context.log.info(s"Received a request to $channel")
           channelActors.find(_.channelMetadata.contains(channel)) match {
             case Some(metadata) =>
               client ! metadata.actor
@@ -50,6 +51,7 @@ object BrokerManager:
           }
 
         case AddSubscriber(channelName, subscriber, sendStoredData) =>
+          context.log.info("Received new subscriber for channel " + channelName)
           channelActors.find(_.channelMetadata.contains(channelName)) match {
             case Some(value) =>
               value.actor ! Subscribe(channelName, subscriber, sendStoredData)

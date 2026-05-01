@@ -13,7 +13,7 @@ import org.scalatest.wordspec.AnyWordSpecLike
 import scala.concurrent.duration.DurationInt
 
 class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Matchers:
-  val testKit = ActorTestKit(ManualTime.config)
+  val testKit = ActorTestKit()
 
   override def afterAll(): Unit = testKit.shutdownTestKit()
 
@@ -60,9 +60,7 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       channelActor ! Save("test", oneTestDataByte, 10000L, producer.ref)
       channelActor ! Save("test", twoTestDataByte, 10000L, producer.ref)
 
-      val manualTime = ManualTime()(testKit.system)
-
-      manualTime.timePasses(100.millis)
+      Thread.sleep(100)
 
       channelActor ! Subscribe("test", subscriber.ref, true)
 
@@ -88,10 +86,7 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       channelActor ! Save("test", oneTestDataByte, 1L, producer.ref)
       channelActor ! Save("test", twoTestDataByte, 1L, producer.ref)
 
-      val manualTime = ManualTime()(testKit.system)
-
-      manualTime.timePasses(50.millis)
-
+      Thread.sleep(100)
 
       channelActor ! Subscribe("test", subscriber.ref, true)
 
