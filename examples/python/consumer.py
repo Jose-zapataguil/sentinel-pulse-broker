@@ -39,7 +39,7 @@ def run():
                 print(f"[NEW MESSAGE] -> {received_text}")
 
         except grpc.RpcError as e:
-            print(f"\Disconnected from Broker: {e.code()} - {e.details()}")
+            print(f"\nDisconnected from Broker: {e.code()} - {e.details()}")
         except KeyboardInterrupt:
             print("\nStopped by the user (Ctrl+C).")
 

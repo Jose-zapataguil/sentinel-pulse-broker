@@ -22,6 +22,10 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorS
 
   given Scheduler = system.scheduler
 
+  private val cores = Runtime.getRuntime.availableProcessors()
+
+  private val streamParallelism = cores * 2
+
   override def push(in: Source[PublishRequest, NotUsed]): Future[PublishSummary] = {
     in.prefixAndTail(1).runWith(Sink.head)
       .flatMap {
@@ -37,7 +41,7 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorS
                   .collect {
                     case Some(bytes) => bytes
                   }
-                  .mapAsync(1) { bytes =>
+                  .mapAsync(streamParallelism) { bytes =>
                     channelActor.ask(ref => Save(value.channel, bytes, value.ttl, ref))
                   }.runFold(0) { (count, result) =>
                     count + 1
