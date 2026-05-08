@@ -74,19 +74,23 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
     }
 
     "clean the stored messages when the TTL is passed" in {
-      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
 
-      val channelActor = testKit.spawn(ChannelActor(manager))
+      val localTestKit = ActorTestKit(ManualTime.config)
+      val manualTime = ManualTime()(localTestKit.internalSystem)
+
+      val manager = localTestKit.spawn(Behaviors.ignore[BrokerCommand])
+
+      val channelActor = localTestKit.spawn(ChannelActor(manager))
       val oneTestDataByte = "Test".getBytes
       val twoTestDataByte = Array(123.toByte)
 
-      val producer = testKit.createTestProbe[SaveAck]()
-      val subscriber = testKit.createTestProbe[PullResponse]()
+      val producer = localTestKit.createTestProbe[SaveAck]()
+      val subscriber = localTestKit.createTestProbe[PullResponse]()
 
       channelActor ! Save("test", oneTestDataByte, 1L, producer.ref)
       channelActor ! Save("test", twoTestDataByte, 1L, producer.ref)
 
-      Thread.sleep(100)
+      manualTime.timePasses(4.minutes)
 
       channelActor ! Subscribe("test", subscriber.ref, true)
 

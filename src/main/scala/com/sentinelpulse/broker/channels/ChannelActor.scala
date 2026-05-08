@@ -7,25 +7,28 @@ import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.{ActorRef, Behavior, Terminated}
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 
+import scala.collection.immutable.Queue
 import scala.concurrent.duration.DurationInt
 
 object ChannelActor:
 
-  opaque type ChannelData = Map[Channel, Data]
+  opaque type Channels = Map[Channel, ChannelData]
 
   opaque type Subscribers = Map[ActorRef[PullResponse], Channel]
 
-  private case class Data(data: Vector[Array[Byte]], limitMillis: Long)
+  private case class ChannelData(messages: Queue[DataEnvelope], ttl: Long)
+
+  private case class DataEnvelope(payload: Array[Byte], timestamp: Long)
 
   private case object TimerKey
 
   def apply(managerRef: ActorRef[BrokerCommand]): Behavior[ChannelActorCommand] =
     Behaviors.withTimers(timers => {
-      timers.startTimerWithFixedDelay(TimerKey, CleanInternalData, 50.millis)
+      timers.startTimerWithFixedDelay(TimerKey, CleanInternalData, 2.minutes)
       channelActor(managerRef, Map.empty, Map.empty)
     })
 
-  def channelActor(managerRef: ActorRef[BrokerCommand], internalData: ChannelData, subscribers: Subscribers): Behavior[ChannelActorCommand] =
+  def channelActor(managerRef: ActorRef[BrokerCommand], channels: Channels, subscribers: Subscribers): Behavior[ChannelActorCommand] =
     Behaviors.receive[ChannelActorCommand] { (context, message) =>
       message match {
         case Save(channel, data, ttl, replyTo) =>
@@ -34,41 +37,54 @@ object ChannelActor:
           subscribers.collect { case (ref, `channel`) => ref}
             .foreach(_ ! pullResponse)
 
-          val expirationTimeMillis = System.currentTimeMillis() + ttl
+          val now = System.currentTimeMillis()
+          val currentChannel = channels.getOrElse(channel, ChannelData(Queue.empty, ttl))
 
-          val newInternalData = internalData.updatedWith(channel){
-            case Some(value) => Some(Data(value.data :+ data, expirationTimeMillis))
-            case None => Some(Data(Vector(data), expirationTimeMillis))
-          }
+          val newMessage = DataEnvelope(data, now)
+          val updatedQueue = currentChannel.messages.enqueue(newMessage)
+
+          val expirationTimeMillis = now - currentChannel.ttl
+          val cleanedQueue = updatedQueue.dropWhile(_.timestamp < expirationTimeMillis)
+
+          val updatedChannels = channels.updated(channel, currentChannel.copy(messages = cleanedQueue))
 
           replyTo ! SaveSuccess
-          channelActor(managerRef, newInternalData, subscribers)
+
+          channelActor(managerRef, updatedChannels, subscribers)
 
         case CleanInternalData =>
           val now = System.currentTimeMillis()
-          val cleanedData = internalData.filter(data => data._2.limitMillis >= now)
+
+          val cleanedData = channels.flatMap { channel =>
+              val expirationTimeMillis = now - channel._2.ttl
+              val updatedChannelData = channel._2.messages.dropWhile(_.timestamp < expirationTimeMillis)
+              if updatedChannelData.nonEmpty then
+                Some(channel._1 -> channel._2.copy(messages = updatedChannelData))
+              else
+                None
+          }
           channelActor(managerRef, cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
           context.watch(actor)
           val updatedSubscribers = subscribers + (actor -> channel)
           if sendStoredData then {
-            internalData.get(channel) match {
+            channels.get(channel) match {
               case Some(value) =>
-                context.log.info(s"Sending ${value.data.size} messages stored")
-                value.data.foreach(message =>
-                  actor ! PullResponse(channel, ByteString.copyFrom(message))
+                context.log.info(s"Sending ${value.messages.size} messages stored")
+                value.messages.foreach(message =>
+                  actor ! PullResponse(channel, ByteString.copyFrom(message.payload))
                 )
               case None =>
                 context.log.info(s"No data stored for channel '$channel'")
             }
           }
           managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
-          channelActor(managerRef, internalData, updatedSubscribers)
+          channelActor(managerRef, channels, updatedSubscribers)
       }
     }.receiveSignal {
       case (context, Terminated(deadActor)) =>
         val typedDeadActor = deadActor.unsafeUpcast[PullResponse]
         val updatedSubscribers = subscribers - typedDeadActor
         managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
-        channelActor(managerRef, internalData, updatedSubscribers)
+        channelActor(managerRef, channels, updatedSubscribers)
     }
