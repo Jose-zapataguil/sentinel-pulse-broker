@@ -13,6 +13,8 @@ def run():
         ('grpc.keepalive_permit_without_calls', True), 
         ('grpc.http2.max_pings_without_data', 0)       
     ]
+    
+    channel_to_listen = input("Enter name of the channel to listen: ")
 
     with grpc.insecure_channel('localhost:8080',options=keepalive_options) as channel:
 
@@ -22,7 +24,6 @@ def run():
             print("ERROR: Check the name of the Stub in broker_pb2_grpc.py")
             return
 
-        channel_to_listen = "example-channel"
         request = broker_pb2.PullRequest(
             channel=channel_to_listen,
             all_messages = True # If you dont want to get old messages that are stored set to False

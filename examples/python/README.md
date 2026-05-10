@@ -68,7 +68,7 @@ python producer.py
 ```
 
 **Usage:**
-1. Enter the channel name (default: `example-channel`)
+1. Enter the channel name
 2. Type your message and press Enter
 3. Type `exit` to close the connection
 
@@ -83,9 +83,9 @@ python consumer.py
 ```
 
 **Usage:**
-1. The script automatically subscribes to `example-channel`
-2. Set `all_messages = True` to receive previously stored messages
-3. Set `all_messages = False` to only receive new messages
+1. Set `all_messages = True` to receive previously stored messages
+2. Set `all_messages = False` to only receive new messages
+3. Enter the name of the actor from whom you want to receive messages
 
 Press Ctrl+C to stop the consumer.
 
@@ -94,7 +94,7 @@ Press Ctrl+C to stop the consumer.
 ### PublishRequest
 
 The `PublishRequest` message uses a oneof field:
-- First message: must include `metadata` with channel and TTL
+- First message: must include `metadata` with channel and TTL (time in milliseconds)
 - Subsequent messages: include `data` with the message bytes
 
 ```python

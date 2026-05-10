@@ -25,14 +25,18 @@ graph TD
     PS --> BM[BrokerManager]
     CS --> BM
     BM -->|"Load Balancing"| CA1[ChannelActor 1]
-    BM --> CA2[ChannelActor 2]
-    BM --> CA3[ChannelActor n]
-    CA1 -->|"Pub/Sub"| P1[Producer]
-    CA2 --> P2[Producer]
-    CA3 --> P3[Producer]
-    P1 -.-> C1[Consumer]
-    P2 -.-> C2[Consumer]
-    P3 -.-> C3[Consumer]
+    BM -->|"Load Balancing"| CA2[ChannelActor 2]
+    BM -->|"Load Balancing"| CA3[ChannelActor N]
+    CA1 ~~~ P1[Producer] -->|"Pub"| CA1
+    P1[Producer] ~~~ CA1
+    CA1[ChannelActor 1] --> |"Sub"| C1[Consumer]
+    CA2 ~~~ P2[Producer] -->|"Pub"| CA2
+    P2[Producer] ~~~ CA2
+    CA2[ChannelActor 2] --> |"Sub"| C2[Consumer]
+    CA3 ~~~ P3[Producer] -->|"Pub"| CA3
+    P3[Producer] ~~~ CA3
+    CA3[ChannelActor N] --> |"Sub"| C3[Consumer]
+
 ```
 
 ### Core Components
@@ -64,11 +68,11 @@ broker {
 }
 ```
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `broker.ip` | IP address to bind | `0.0.0.0` |
-| `broker.port` | Port number | `8080` |
-| `broker.actors` | Number of channel actors | `4` |
+| Parameter       | Description                                      | Default   |
+|-----------------|--------------------------------------------------|-----------|
+| `broker.ip`     | IP address to bind                               | `0.0.0.0` |
+| `broker.port`   | Port number                                      | `8080`    |
+| `broker.actors` | Number of actors to store the different channels | `4`       |
 
 ## API
 

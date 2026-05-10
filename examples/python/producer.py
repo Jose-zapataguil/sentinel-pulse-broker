@@ -16,6 +16,9 @@ keepalive_options = [
 def run():
 
     print("Connected to the Broker in localhost:8080...")
+    
+    channel_to_send = input("[!] Enter the name of the channel to send the data: ")
+    
     with grpc.insecure_channel("localhost:8080", options=keepalive_options) as channel:
         stub = broker_pb2_grpc.ProducerServiceStub(channel)
 
@@ -26,7 +29,7 @@ def run():
 
                 metadata_request = broker_pb2.PublishRequest(
                     metadata=broker_pb2.PublishMetadata(
-                        channel="example-channel", ttl=10000
+                        channel=channel_to_send, ttl=10000
                     )
                 )
                 yield metadata_request
