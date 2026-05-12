@@ -1,7 +1,7 @@
 package com.sentinelpulse.broker.api
 
 import com.sentinelpulse.broker.channels.ChannelProtocol
-import com.sentinelpulse.broker.channels.ChannelProtocol.Save
+import com.sentinelpulse.broker.channels.ChannelProtocol.{ChannelActorCommand, Save, SaveAck}
 import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, GetOrSetActorForChannel}
 import com.sentinelpulse.broker.proto.{ProducerService, PublishRequest, PublishSummary}
 import org.apache.pekko.NotUsed
@@ -9,8 +9,8 @@ import org.apache.pekko.actor.typed.{ActorRef, ActorSystem, Scheduler}
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
+import org.apache.pekko.stream.typed.scaladsl.ActorFlow
 import org.apache.pekko.util.Timeout
-
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.DurationInt
 
@@ -41,9 +41,10 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorS
                   .collect {
                     case Some(bytes) => bytes
                   }
-                  .mapAsync(streamParallelism) { bytes =>
-                    channelActor.ask(ref => Save(value.channel, bytes, value.ttl, ref))
-                  }.runFold(0) { (count, result) =>
+                  .via(ActorFlow.ask[Array[Byte], ChannelActorCommand, SaveAck](streamParallelism)(channelActor) {
+                    (bytes, ref) => Save(value.channel, bytes, value.ttl, ref)
+                  })
+                  .runFold(0) { (count, result) =>
                     count + 1
                   }.map(total => PublishSummary(success = true, count = total))
               }

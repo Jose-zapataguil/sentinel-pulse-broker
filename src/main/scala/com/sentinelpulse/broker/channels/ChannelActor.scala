@@ -14,7 +14,7 @@ object ChannelActor:
 
   opaque type Channels = Map[Channel, ChannelData]
 
-  opaque type Subscribers = Map[ActorRef[PullResponse], Channel]
+  opaque type Subscribers = Map[Channel, Set[ActorRef[PullResponse]]]
 
   private case class ChannelData(messages: Queue[DataEnvelope], ttl: Long)
 
@@ -34,8 +34,8 @@ object ChannelActor:
         case Save(channel, data, ttl, replyTo) =>
           val pullResponse = PullResponse(channel, ByteString.copyFrom(data))
 
-          subscribers.collect { case (ref, `channel`) => ref}
-            .foreach(_ ! pullResponse)
+          subscribers.get(channel)
+            .foreach(subscribers => subscribers.foreach(_ ! pullResponse))
 
           val now = System.currentTimeMillis()
           val currentChannel = channels.getOrElse(channel, ChannelData(Queue.empty, ttl))
@@ -66,7 +66,10 @@ object ChannelActor:
           channelActor(managerRef, cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
           context.watch(actor)
-          val updatedSubscribers = subscribers + (actor -> channel)
+          val updatedSubscribers = subscribers.updatedWith(channel) {
+            case Some(refs) => Some(refs + actor)
+            case None => Some(Set(actor))
+          }
           if sendStoredData then {
             channels.get(channel) match {
               case Some(value) =>
@@ -78,13 +81,16 @@ object ChannelActor:
                 context.log.info(s"No data stored for channel '$channel'")
             }
           }
-          managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
+          managerRef ! SubscriberCount(updatedSubscribers.values.map(_.size).sum, context.self)
           channelActor(managerRef, channels, updatedSubscribers)
       }
     }.receiveSignal {
       case (context, Terminated(deadActor)) =>
         val typedDeadActor = deadActor.unsafeUpcast[PullResponse]
-        val updatedSubscribers = subscribers - typedDeadActor
+        val removedSubForChannel = subscribers.find(_._2.contains(typedDeadActor))
+          .map(v => v._1 -> v._2.filter(_ == deadActor)).get
+        val updatedSubscribers = subscribers + (removedSubForChannel._1 -> removedSubForChannel._2)
+
         managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
         channelActor(managerRef, channels, updatedSubscribers)
     }
