@@ -1,5 +1,6 @@
 package com.sentinelpulse.broker.channels
 
+import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.ActorRef
 
@@ -17,7 +18,7 @@ object ChannelProtocol:
   sealed trait ChannelActorCommand
 
   case class Save(channel: String,
-                  payload: Array[Byte],
+                  payload: ByteString,
                   ttl: Long,
                   replyTo: ActorRef[SaveAck]
                  ) extends ChannelActorCommand

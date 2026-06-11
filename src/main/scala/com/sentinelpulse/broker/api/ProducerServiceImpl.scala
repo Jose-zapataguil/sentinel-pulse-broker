@@ -11,6 +11,7 @@ import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 import org.apache.pekko.stream.typed.scaladsl.ActorFlow
 import org.apache.pekko.util.Timeout
+import com.google.protobuf.ByteString
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.DurationInt
 
@@ -37,11 +38,11 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorS
               }
               futureChannel.flatMap { channelActor =>
                 tail
-                  .map(request => request.payload.data.map(_.toByteArray))
+                  .map(request => request.payload.data)
                   .collect {
                     case Some(bytes) => bytes
                   }
-                  .via(ActorFlow.ask[Array[Byte], ChannelActorCommand, SaveAck](streamParallelism)(channelActor) {
+                  .via(ActorFlow.ask[ByteString, ChannelActorCommand, SaveAck](streamParallelism)(channelActor) {
                     (bytes, ref) => Save(value.channel, bytes, value.ttl, ref)
                   })
                   .runFold(0) { (count, result) =>

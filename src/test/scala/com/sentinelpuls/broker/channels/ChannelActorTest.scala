@@ -23,7 +23,7 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       val channelActor = testKit.spawn(ChannelActor(manager))
       val probe = testKit.createTestProbe[SaveAck]()
 
-      channelActor ! Save("test", Array(), 1000L, probe.ref)
+      channelActor ! Save("test", ByteString.empty(), 1000L, probe.ref)
 
       probe.expectMessage(SaveSuccess)
     }
@@ -32,7 +32,7 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
 
       val channelActor = testKit.spawn(ChannelActor(manager))
-      val testDataByte = "Test".getBytes
+      val testDataByte = ByteString.copyFromUtf8("Test")
 
       val producer = testKit.createTestProbe[SaveAck]()
       val subscriber = testKit.createTestProbe[PullResponse]()
@@ -44,15 +44,15 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       val message = subscriber.receiveMessage()
 
       message.channel shouldBe "test"
-      testDataByte should contain theSameElementsAs message.payload.toByteArray
+      testDataByte.toString("UTF-8") shouldBe message.payload.toString("UTF-8")
     }
 
     "return all PullResponse messages stores in the channel when the subscriber sends the sendStoredData flag" in {
       val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
 
       val channelActor = testKit.spawn(ChannelActor(manager))
-      val oneTestDataByte = "Test".getBytes
-      val twoTestDataByte = Array(123.toByte)
+      val oneTestDataByte = ByteString.copyFromUtf8("Test")
+      val twoTestDataByte = ByteString.copyFrom(Array(123.toByte))
 
       val producer = testKit.createTestProbe[SaveAck]()
       val subscriber = testKit.createTestProbe[PullResponse]()
@@ -66,8 +66,8 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
 
       producer.expectMessage(SaveSuccess)
 
-      val expectedResponse1 = PullResponse("test", ByteString.copyFrom(oneTestDataByte))
-      val expectedResponse2 = PullResponse("test", ByteString.copyFrom(twoTestDataByte))
+      val expectedResponse1 = PullResponse("test", oneTestDataByte)
+      val expectedResponse2 = PullResponse("test", twoTestDataByte)
 
       subscriber.expectMessage(expectedResponse1)
       subscriber.expectMessage(expectedResponse2)
@@ -81,8 +81,8 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       val manager = localTestKit.spawn(Behaviors.ignore[BrokerCommand])
 
       val channelActor = localTestKit.spawn(ChannelActor(manager))
-      val oneTestDataByte = "Test".getBytes
-      val twoTestDataByte = Array(123.toByte)
+      val oneTestDataByte = ByteString.copyFromUtf8("Test")
+      val twoTestDataByte = ByteString.copyFrom(Array(123.toByte))
 
       val producer = localTestKit.createTestProbe[SaveAck]()
       val subscriber = localTestKit.createTestProbe[PullResponse]()
@@ -104,10 +104,11 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
 
       val subscriber1 = testKit.spawn(Behaviors.ignore[PullResponse])
       val subscriber2 = testKit.createTestProbe[PullResponse]()
+      val producer = testKit.spawn(Behaviors.ignore[SaveAck])
 
 
-      channelActor ! Subscribe("test", subscriber1.ref, false)
-      channelActor ! Subscribe("test", subscriber2.ref, false)
+      channelActor ! Subscribe("test1", subscriber1.ref, false)
+      channelActor ! Subscribe("test2", subscriber2.ref, false)
 
       Thread.sleep(100)
       manager.expectMessage(SubscriberCount(1, channelActor.ref))
@@ -118,6 +119,10 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       Thread.sleep(100)
       
       manager.expectMessage(SubscriberCount(1, channelActor.ref))
+
+      channelActor ! Save("test2", ByteString.copyFromUtf8("more"), 10000L, producer.ref)
+
+      subscriber2.expectMessage(PullResponse("test2", ByteString.copyFromUtf8("more")))
     }
   }
 

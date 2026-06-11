@@ -18,7 +18,7 @@ object ChannelActor:
 
   private case class ChannelData(messages: Queue[DataEnvelope], ttl: Long)
 
-  private case class DataEnvelope(payload: Array[Byte], timestamp: Long)
+  private case class DataEnvelope(payload: ByteString, timestamp: Long)
 
   private case object TimerKey
 
@@ -32,7 +32,7 @@ object ChannelActor:
     Behaviors.receive[ChannelActorCommand] { (context, message) =>
       message match {
         case Save(channel, data, ttl, replyTo) =>
-          val pullResponse = PullResponse(channel, ByteString.copyFrom(data))
+          val pullResponse = PullResponse(channel, data)
 
           subscribers.get(channel)
             .foreach(subscribers => subscribers.foreach(_ ! pullResponse))
@@ -75,7 +75,7 @@ object ChannelActor:
               case Some(value) =>
                 context.log.info(s"Sending ${value.messages.size} messages stored")
                 value.messages.foreach(message =>
-                  actor ! PullResponse(channel, ByteString.copyFrom(message.payload))
+                  actor ! PullResponse(channel, message.payload)
                 )
               case None =>
                 context.log.info(s"No data stored for channel '$channel'")
@@ -87,10 +87,10 @@ object ChannelActor:
     }.receiveSignal {
       case (context, Terminated(deadActor)) =>
         val typedDeadActor = deadActor.unsafeUpcast[PullResponse]
-        val removedSubForChannel = subscribers.find(_._2.contains(typedDeadActor))
-          .map(v => v._1 -> v._2.filter(_ == deadActor)).get
-        val updatedSubscribers = subscribers + (removedSubForChannel._1 -> removedSubForChannel._2)
+        val updatedSubscribers = subscribers.map {
+          case (channel, refs) => channel -> (refs - typedDeadActor)
+        }.filter(_._2.nonEmpty)
 
-        managerRef ! SubscriberCount(updatedSubscribers.size, context.self)
+        managerRef ! SubscriberCount(updatedSubscribers.values.map(_.size).sum, context.self)
         channelActor(managerRef, channels, updatedSubscribers)
     }

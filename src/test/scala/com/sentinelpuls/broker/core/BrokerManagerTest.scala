@@ -11,7 +11,11 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 class BrokerManagerTest extends AnyWordSpecLike with Matchers with BeforeAndAfterAll:
+  
   val testKit = ActorTestKit()
+
+
+  override protected def afterAll(): Unit = testKit.shutdownTestKit()
 
   "A broker manager" should {
     "return an ActorRef when a new producer send data to a channel" in {
