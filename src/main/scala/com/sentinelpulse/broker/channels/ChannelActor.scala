@@ -2,7 +2,7 @@ package com.sentinelpulse.broker.channels
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelProtocol.*
-import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, SubscriberCount}
+import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, RegisteredChannel, SubscriberCount, UnregisteredChannel}
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.{ActorRef, Behavior, Terminated}
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -49,6 +49,7 @@ object ChannelActor:
           val updatedChannels = channels.updated(channel, currentChannel.copy(messages = cleanedQueue))
 
           replyTo ! SaveSuccess
+          managerRef ! RegisteredChannel(channel, context.self)
 
           channelActor(managerRef, updatedChannels, subscribers)
 
@@ -58,10 +59,12 @@ object ChannelActor:
           val cleanedData = channels.flatMap { channel =>
               val expirationTimeMillis = now - channel._2.ttl
               val updatedChannelData = channel._2.messages.dropWhile(_.timestamp < expirationTimeMillis)
-              if updatedChannelData.nonEmpty then
+              if updatedChannelData.nonEmpty || subscribers.contains(channel._1) then
                 Some(channel._1 -> channel._2.copy(messages = updatedChannelData))
-              else
+              else {
+                managerRef ! UnregisteredChannel(channel._1, context.self)
                 None
+              }
           }
           channelActor(managerRef, cleanedData, subscribers)
         case Subscribe(channel, actor, sendStoredData) =>
@@ -73,12 +76,12 @@ object ChannelActor:
           if sendStoredData then {
             channels.get(channel) match {
               case Some(value) =>
-                context.log.info(s"Sending ${value.messages.size} messages stored")
+                context.log.debug(s"Sending ${value.messages.size} messages stored")
                 value.messages.foreach(message =>
                   actor ! PullResponse(channel, message.payload)
                 )
               case None =>
-                context.log.info(s"No data stored for channel '$channel'")
+                context.log.debug(s"No data stored for channel '$channel'")
             }
           }
           managerRef ! SubscriberCount(updatedSubscribers.values.map(_.size).sum, context.self)

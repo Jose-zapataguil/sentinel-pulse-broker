@@ -16,8 +16,9 @@ object Broker:
     val ip = conf.getString("broker.ip")
     val port = conf.getInt("broker.port")
     val nOfActors = conf.getInt("broker.actors")
+    val storageMode = conf.getString("broker.mode")
 
-    val brokerParameters = BrokerParameters(ip, port, nOfActors)
+    val brokerParameters = BrokerParameters(ip, port, nOfActors, storageMode)
 
     val system = ActorSystem[Nothing](BrokerGuardian(brokerParameters), "broker-system", finalConf)
 

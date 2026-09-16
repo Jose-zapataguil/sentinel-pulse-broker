@@ -9,7 +9,7 @@ object BrokerGuardian:
   def apply(brokerParameters: BrokerParameters): Behavior[Nothing] = Behaviors.setup[Nothing] { context =>
     context.log.info("Starting broker")
 
-    val manager = context.spawn(BrokerManager(brokerParameters.nOfActors), "broker-manager")
+    val manager = context.spawn(BrokerManager(brokerParameters.nOfActors, brokerParameters.storageMode), "broker-manager")
 
     given ActorSystem[Nothing] = context.system
 

@@ -3,7 +3,7 @@ package com.sentinelpulse.broker.core
 import com.sentinelpulse.broker.channels.ChannelActor
 import com.sentinelpulse.broker.channels.ChannelProtocol.{Channel, ChannelActorCommand, Subscribe}
 import com.sentinelpulse.broker.proto.PullResponse
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import org.apache.pekko.actor.typed.scaladsl.{Behaviors, Routers}
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 
 object BrokerManager:
@@ -14,79 +14,114 @@ object BrokerManager:
 
   case class AddSubscriber(channelName: Channel, subscriber: ActorRef[PullResponse], sendStoredData: Boolean = false) extends BrokerCommand
 
+  case class RegisteredChannel(channel: Channel, actor: ActorRef[ChannelActorCommand]) extends BrokerCommand
+
+  case class UnregisteredChannel(channel: Channel, actor: ActorRef[ChannelActorCommand]) extends BrokerCommand
+
   case class SubscriberCount(count: Int, actor: ActorRef[ChannelActorCommand]) extends BrokerCommand
 
-  case class ActorForChannels(actor: ActorRef[ChannelActorCommand], channelMetadata: Map[Channel, Metadata], numberOfSubscribers: Int)
+  case class State(
+                    channelIndex: Map[Channel, ActorRef[ChannelActorCommand]],
+                    actorStats: Map[ActorRef[ChannelActorCommand], Int],
+                  )
 
-  case class Metadata(ttl: Long)
-
-  private val DEFAULT_TTL_TIME = 1000L
-
-  def apply(numberOfActors: Int): Behavior[BrokerCommand] = Behaviors.setup { context =>
-    val channelActors = 0 until numberOfActors map { n =>
-      val actor = context.spawn(ChannelActor(context.self), s"actor$n")
-      ActorForChannels(actor, Map.empty, 0)
+  def apply(numberOfActors: Int, storageMode: String): Behavior[BrokerCommand] = Behaviors.setup { context =>
+    if (storageMode == "high-throughput") {
+      context.log.info(s"Starting broker in $storageMode mode")
+      val pool = Routers.pool(numberOfActors)(ChannelActor(context.self))
+        .withBroadcastPredicate {
+          case _: Subscribe => true
+          case _ => false
+        }
+      val routerRef = context.spawn(pool, "router-pool")
+      highThroughputBehavior(routerRef, Map.empty)
+    } else {
+      val channelActors = 0 until numberOfActors map { n =>
+        context.spawn(ChannelActor(context.self), s"actor$n")
+      }
+      val initialStats = channelActors.map(_ -> 0).toMap
+      strictOrderBehavior(State(Map.empty, initialStats))
     }
-    brokerManager(channelActors.toList)
   }
 
-  def brokerManager(channelActors: List[ActorForChannels]): Behavior[BrokerCommand] =
+  def highThroughputBehavior(
+                              router: ActorRef[ChannelActorCommand],
+                              channelIndex: Map[Channel, Set[ActorRef[ChannelActorCommand]]]
+                            ): Behavior[BrokerCommand] = Behaviors.receiveMessage {
+    case GetOrSetActorForChannel(_, _, replyTo) =>
+      replyTo ! router
+      Behaviors.same
+
+    case AddSubscriber(channelName, subscriber, sendStoredData) =>
+      router ! Subscribe(channelName, subscriber, sendStoredData)
+      Behaviors.same
+    case SubscriberCount(_, _) => Behaviors.same
+    case RegisteredChannel(channel, actor) =>
+      val updatedSet = channelIndex.getOrElse(channel, Set.empty) + actor
+      highThroughputBehavior(router, channelIndex.updated(channel, updatedSet))
+    case UnregisteredChannel(channel, actor) =>
+      val updatedSet = channelIndex.getOrElse(channel, Set.empty) - actor
+      if (updatedSet.isEmpty) {
+        highThroughputBehavior(router, channelIndex - channel)
+      } else {
+        highThroughputBehavior(router, channelIndex.updated(channel, updatedSet))
+      }
+  }
+
+  def strictOrderBehavior(state: State): Behavior[BrokerCommand] =
     Behaviors.receive { (context, message) =>
       message match {
         case GetOrSetActorForChannel(channel, ttl, client) =>
           context.log.info(s"Received a request to $channel")
-          channelActors.find(_.channelMetadata.contains(channel)) match {
-            case Some(metadata) =>
-              client ! metadata.actor
+          state.channelIndex.get(channel) match {
+            case Some(actor) =>
+              client ! actor
               Behaviors.same
 
             case None =>
-              val (lessLoadedActor, restChannelActors) = getLessLoadedActorAndRest(channelActors)
-              client ! lessLoadedActor.actor
+              val lessLoadedActor = getLessLoadedActor(state.actorStats)
+              client ! lessLoadedActor
 
-              val updatedChannelActors = lessLoadedActor.copy(
-                channelMetadata = lessLoadedActor.channelMetadata + (channel -> Metadata(ttl))
-              )
-              brokerManager(updatedChannelActors :: restChannelActors)
+              strictOrderBehavior(state.copy(channelIndex = state.channelIndex + (channel -> lessLoadedActor)))
           }
 
         case AddSubscriber(channelName, subscriber, sendStoredData) =>
           context.log.info("Received new subscriber for channel " + channelName)
-          channelActors.find(_.channelMetadata.contains(channelName)) match {
-            case Some(value) =>
-              value.actor ! Subscribe(channelName, subscriber, sendStoredData)
-              val updatedChannelActors = channelActors.map {
-                case a if a.actor == value.actor =>
-                  a.copy(numberOfSubscribers = a.numberOfSubscribers + 1)
-                case a => a
-              }
-              brokerManager(updatedChannelActors)
-            case None =>
-              val (lessLoadedActor, restChannelActors) = getLessLoadedActorAndRest(channelActors)
-              lessLoadedActor.actor ! Subscribe(channelName, subscriber, sendStoredData)
+          state.channelIndex.get(channelName) match {
+            case Some(actor) =>
+              actor ! Subscribe(channelName, subscriber, sendStoredData)
+              strictOrderBehavior(state)
 
-              val updatedActor = lessLoadedActor.copy(
-                channelMetadata = lessLoadedActor.channelMetadata + (channelName -> Metadata(DEFAULT_TTL_TIME)),
-                numberOfSubscribers = lessLoadedActor.numberOfSubscribers + 1
-              )
-              brokerManager(updatedActor :: restChannelActors)
+            case None =>
+              val lessLoadedActor = getLessLoadedActor(state.actorStats)
+              lessLoadedActor ! Subscribe(channelName, subscriber, sendStoredData)
+
+              strictOrderBehavior(state.copy(channelIndex = state.channelIndex + (channelName -> lessLoadedActor)))
           }
+
         case SubscriberCount(count, targetActor) =>
-          val updatedChannelActors = channelActors.map {
-            case a if a.actor == targetActor => a.copy(numberOfSubscribers = count)
-            case a => a
-          }
-          brokerManager(updatedChannelActors)
+          val newState = state.copy(
+            actorStats = state.actorStats.updated(targetActor, count)
+          )
+          strictOrderBehavior(newState)
+
+        case RegisteredChannel(channel, actor) =>
+          val newState = state.copy(
+            channelIndex = state.channelIndex + (channel -> actor)
+          )
+          strictOrderBehavior(newState)
+
+        case UnregisteredChannel(channel, actor) =>
+          val newState =
+            if state.channelIndex.get(channel).contains(actor) then
+              state.copy(channelIndex = state.channelIndex - channel)
+            else state
+          strictOrderBehavior(newState)
       }
     }
 
-  private[core] def getLessLoadedActorAndRest(channelActors: List[ActorForChannels]): (ActorForChannels, List[ActorForChannels]) =
-    val lessLoadedActor = channelActors.map { actorForChannels =>
-      val nOfChannelsByActor = actorForChannels.channelMetadata.size
-      val nOfTotalSubscribers = actorForChannels.numberOfSubscribers
-      (actorForChannels, nOfTotalSubscribers + nOfChannelsByActor)
-    }.minBy(_._2)._1
-    val restOfActors = channelActors.filter(_.actor != lessLoadedActor.actor)
-    (lessLoadedActor, restOfActors)
+  // Uncompleted
+  private[core] def getLessLoadedActor(actorStats: Map[ActorRef[ChannelActorCommand], Int]): ActorRef[ChannelActorCommand] = actorStats.minBy(_._2)._1
+
   
 
