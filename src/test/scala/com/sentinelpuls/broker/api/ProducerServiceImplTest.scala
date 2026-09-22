@@ -8,28 +8,31 @@ import com.sentinelpulse.broker.proto.PublishRequest.Payload.{Data, Metadata}
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.stream.scaladsl.Source
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.Await
 
-class ProducerServiceImplTest extends AnyWordSpecLike with Matchers:
+class ProducerServiceImplTest extends AnyWordSpecLike with Matchers with BeforeAndAfterAll:
 
   val testKit = ActorTestKit()
 
+  override protected def afterAll(): Unit = testKit.shutdownTestKit()
+
   "A producer" should {
-    "return a PublishSummary object when the stream ends" in {
+    "return a PublishSummary object when the stream ends in strict-order mode" in {
 
       given ActorSystem[Nothing] = testKit.system
 
-      val manager = testKit.spawn(BrokerManager(2))
+      val manager = testKit.spawn(BrokerManager(2, "strict-order"))
 
       val producerService = new ProducerServiceImpl(manager)
 
       val payloadTest1 = ByteString.copyFromUtf8("TEST")
       val payloadTest2 = ByteString.copyFromUtf8("test")
-      
+
       val source = Source(
         List(
           PublishRequest(
@@ -44,6 +47,48 @@ class ProducerServiceImplTest extends AnyWordSpecLike with Matchers:
       val summary = Await.result(future, 1.second)
 
       summary.count shouldBe 2
+    }
+
+    "return a PublishSummary object when the stream ends in high-throughput mode" in {
+
+      given ActorSystem[Nothing] = testKit.system
+
+      val manager = testKit.spawn(BrokerManager(2, "high-throughput"))
+
+      val producerService = new ProducerServiceImpl(manager)
+
+      val source = Source(
+        List(
+          PublishRequest(
+            Metadata(PublishMetadata("test1", 1000L))
+          ),
+          PublishRequest(Data(ByteString.copyFromUtf8("TEST"))),
+          PublishRequest(Data(ByteString.copyFromUtf8("test"))),
+
+        )
+      )
+      val future = producerService.push(source)
+      val summary = Await.result(future, 1.second)
+
+      summary.count shouldBe 2
+    }
+
+    "fail when the first message does not contain metadata" in {
+
+      given ActorSystem[Nothing] = testKit.system
+
+      val manager = testKit.spawn(BrokerManager(2, "strict-order"))
+
+      val producerService = new ProducerServiceImpl(manager)
+
+      val source = Source.single(PublishRequest(Data(ByteString.copyFromUtf8("no-metadata"))))
+
+      val future = producerService.push(source)
+
+      val exception = intercept[IllegalArgumentException] {
+        Await.result(future, 1.second)
+      }
+      exception.getMessage should include("metadata")
     }
   }
 

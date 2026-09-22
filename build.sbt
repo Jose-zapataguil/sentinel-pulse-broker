@@ -38,6 +38,8 @@ lazy val root = (project in file("."))
     )
   )
 
+Test / parallelExecution := false
+
 
 
 

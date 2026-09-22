@@ -3,6 +3,7 @@ package com.sentinelpuls.broker.api
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.api.ConsumerServiceImpl
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 import com.sentinelpulse.broker.core.BrokerManager.{AddSubscriber, BrokerCommand}
@@ -10,9 +11,11 @@ import com.sentinelpulse.broker.proto.{PullRequest, PullResponse}
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.stream.testkit.scaladsl.TestSink
 
-class ConsumerServiceImplTest extends AnyWordSpecLike with Matchers:
+class ConsumerServiceImplTest extends AnyWordSpecLike with Matchers with BeforeAndAfterAll:
 
   val testKit = ActorTestKit()
+
+  override protected def afterAll(): Unit = testKit.shutdownTestKit()
 
   "A consumer service" should {
     "generate a Source with the incoming messages" in {
@@ -46,6 +49,27 @@ class ConsumerServiceImplTest extends AnyWordSpecLike with Matchers:
         .expectNext(testMsg1)
         .expectNext(testMsg2)
 
+
+      streamProbe.cancel()
+    }
+
+    "request stored data only when all_messages is true" in {
+      given ActorSystem[Nothing] = testKit.system
+
+      val mockManager = testKit.createTestProbe[BrokerCommand]()
+
+      val consumerService = new ConsumerServiceImpl(mockManager.ref)
+
+      val pullRequest = PullRequest("test")
+
+      val stream = consumerService.pull(pullRequest)
+
+      val streamProbe = stream.runWith(TestSink[PullResponse]())
+
+      val receivedMsg = mockManager.expectMessageType[AddSubscriber]
+
+      receivedMsg.channelName shouldBe "test"
+      receivedMsg.sendStoredData shouldBe false
 
       streamProbe.cancel()
     }

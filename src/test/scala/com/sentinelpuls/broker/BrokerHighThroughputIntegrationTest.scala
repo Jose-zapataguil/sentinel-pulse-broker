@@ -5,37 +5,31 @@ import com.sentinelpulse.broker.core.{BrokerManager, BrokerServer}
 import com.sentinelpulse.broker.proto.PublishRequest.Payload
 import com.sentinelpulse.broker.proto.PublishRequest.Payload.Data
 import com.sentinelpulse.broker.proto.{ConsumerServiceClient, ProducerServiceClient, PublishMetadata, PublishRequest, PullRequest, PullResponse}
-import com.typesafe.config.ConfigFactory
-import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.GrpcClientSettings
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.http.scaladsl.Http.ServerBinding
-import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.stream.testkit.scaladsl.TestSink
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.wordspec.AnyWordSpecLike
-
 import scala.concurrent.duration.*
 import scala.concurrent.Await
 
-val testConfig = ConfigFactory.parseString("pekko.http.server.preview.enable-http2 = on")
-  .withFallback(ConfigFactory.load())
-
-class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with AnyWordSpecLike with BeforeAndAfterAll:
+class BrokerHighThroughputIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with AnyWordSpecLike with BeforeAndAfterAll:
 
   var serverBinding: ServerBinding = _
   var producerClient: ProducerServiceClient = _
   var consumerClient: ConsumerServiceClient = _
-  
+
   val ip = "127.0.0.1"
-  val port = 8080
+  val port = 8081
 
   override def beforeAll(): Unit =
     super.beforeAll()
 
-    val manager = spawn(BrokerManager(4, "strict-order"), "test-integration-manager")
+    val manager = spawn(BrokerManager(4, "high-throughput"), "test-ht-integration-manager")
 
     given ActorSystem[Nothing] = system
 
@@ -43,7 +37,7 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
     serverBinding = Await.result(grpcServer.run(), 5.seconds)
 
     val clientSettings = GrpcClientSettings
-      .connectToServiceAt("127.0.0.1", 8080)
+      .connectToServiceAt("127.0.0.1", port)
       .withTls(false)
 
     producerClient = ProducerServiceClient(clientSettings)
@@ -57,11 +51,11 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
     super.afterAll()
 
 
-  "A grpc broker" should {
+  "A grpc broker in high-throughput mode" should {
     "allow a client to consume messages published by another client" in {
 
-      val testChannel = "test-channel"
-      val testPayload = ByteString.copyFrom("Test message", "UTF-8")
+      val testChannel = "ht-test-channel"
+      val testPayload = ByteString.copyFrom("HT Test message", "UTF-8")
 
       val subRequest = PullRequest(testChannel)
 
@@ -79,10 +73,9 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
       val metadataSource = Source.single(publishMetadata)
 
       val publishData = PublishRequest(Data(testPayload))
-      
+
       val dataSource = Source.tick(initialDelay = 0.millis, interval = 100.millis, "tick")
         .map(_ => publishData).take(10)
-
 
       val producerStream = metadataSource.concat(dataSource)
 
@@ -94,8 +87,79 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
 
       streamProbe.cancel()
     }
+
+    "deliver multiple messages from round-robin producers to a single consumer" in {
+      val testChannel = "ht-multi-channel"
+
+      val subRequest = PullRequest(testChannel)
+
+      val consumerStream = consumerClient.pull(subRequest)
+      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
+
+      streamProbe.request(10)
+
+      val publishMetadata = PublishRequest(
+        Payload.Metadata(
+          PublishMetadata(testChannel, 1000L)
+        ))
+
+      val dataMessages = (1 to 10).map { i =>
+        PublishRequest(Data(ByteString.copyFromUtf8(s"Message-$i")))
+      }
+
+      val producerStream = Source(publishMetadata :: dataMessages.toList)
+
+      producerClient.push(producerStream)
+
+      val messages = streamProbe.within(5.seconds) {
+      streamProbe.expectNextN(10)
+      }
+      messages should have size 10
+
+      streamProbe.cancel()
+    }
+
+    "broadcast messages to multiple consumers" in {
+      val testChannel = "ht-broadcast-channel"
+
+      val subRequest1 = PullRequest(testChannel)
+      val subRequest2 = PullRequest(testChannel)
+
+      val consumerStream1 = consumerClient.pull(subRequest1)
+      val consumerStream2 = consumerClient.pull(subRequest2)
+
+      val streamProbe1 = consumerStream1.runWith(TestSink[PullResponse]())
+      val streamProbe2 = consumerStream2.runWith(TestSink[PullResponse]())
+
+      streamProbe1.request(3)
+      streamProbe2.request(3)
+
+      val publishMetadata = PublishRequest(
+        Payload.Metadata(
+          PublishMetadata(testChannel, 1000L)
+        ))
+
+      val dataMessages = (1 to 3).map { i =>
+        PublishRequest(Data(ByteString.copyFromUtf8(s"Broadcast-$i")))
+      }
+
+      val producerStream = Source(publishMetadata :: dataMessages.toList)
+
+      producerClient.push(producerStream)
+
+      val messages1 = streamProbe1.within(10.seconds) {
+        streamProbe1.expectNextN(3)
+      }
+      val messages2 = streamProbe2.within(10.seconds) {
+        streamProbe2.expectNextN(3)
+      }
+
+      messages1 should have size 3
+      messages2 should have size 3
+
+      streamProbe1.cancel()
+      streamProbe2.cancel()
+    }
   }
 
-
-end BrokerIntegrationTest
-
+end BrokerHighThroughputIntegrationTest

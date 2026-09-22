@@ -71,7 +71,7 @@ object BrokerManager:
   def strictOrderBehavior(state: State): Behavior[BrokerCommand] =
     Behaviors.receive { (context, message) =>
       message match {
-        case GetOrSetActorForChannel(channel, ttl, client) =>
+        case GetOrSetActorForChannel(channel, _, client) =>
           context.log.info(s"Received a request to $channel")
           state.channelIndex.get(channel) match {
             case Some(actor) =>
