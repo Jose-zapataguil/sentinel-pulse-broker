@@ -58,13 +58,11 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       val subscriber = testKit.createTestProbe[PullResponse]()
 
       channelActor ! Save("test", oneTestDataByte, 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
       channelActor ! Save("test", twoTestDataByte, 10000L, producer.ref)
-
-      Thread.sleep(100)
+      producer.expectMessage(SaveSuccess)
 
       channelActor ! Subscribe("test", subscriber.ref, true)
-
-      producer.expectMessage(SaveSuccess)
 
       val expectedResponse1 = PullResponse("test", oneTestDataByte)
       val expectedResponse2 = PullResponse("test", twoTestDataByte)
@@ -108,16 +106,12 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
 
 
       channelActor ! Subscribe("test1", subscriber1.ref, false)
-      channelActor ! Subscribe("test2", subscriber2.ref, false)
-
-      Thread.sleep(100)
       manager.expectMessage(SubscriberCount(1, channelActor.ref))
+      channelActor ! Subscribe("test2", subscriber2.ref, false)
       manager.expectMessage(SubscriberCount(2, channelActor.ref))
 
       testKit.stop(subscriber1.ref)
 
-      Thread.sleep(100)
-      
       manager.expectMessage(SubscriberCount(1, channelActor.ref))
 
       channelActor ! Save("test2", ByteString.copyFromUtf8("more"), 10000L, producer.ref)

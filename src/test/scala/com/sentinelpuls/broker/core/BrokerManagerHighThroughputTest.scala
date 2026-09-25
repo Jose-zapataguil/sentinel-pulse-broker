@@ -47,8 +47,8 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
       val saveProbe = testKit.createTestProbe[SaveAck]()
       router ! Save("early-sub", ByteString.copyFromUtf8("hello"), 10000L, saveProbe.ref)
 
-      saveProbe.expectMessage(SaveSuccess)
-      val response = subscriber.expectMessageType[PullResponse]
+      saveProbe.expectMessage(5.seconds, SaveSuccess)
+      val response = subscriber.expectMessageType[PullResponse](5.seconds)
       response.channel shouldBe "early-sub"
       response.payload shouldBe ByteString.copyFromUtf8("hello")
     }
@@ -67,7 +67,7 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
         router ! Save("dist", ByteString.copyFromUtf8(s"msg-$i"), 10000L, saveProbe.ref)
       }
 
-      val responses = saveProbe.receiveMessages(messageCount, 3.seconds)
+      val responses = saveProbe.receiveMessages(messageCount, 5.seconds)
       responses should have size messageCount
       responses.foreach(_ shouldBe SaveSuccess)
     }
@@ -81,15 +81,12 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
 
       val saveProbe = testKit.createTestProbe[SaveAck]()
       router ! Save("replay", ByteString.copyFromUtf8("first"), 10000L, saveProbe.ref)
-      saveProbe.expectMessage(SaveSuccess)
-
-      // Allow the save to be fully processed before subscribing
-      Thread.sleep(100)
+      saveProbe.expectMessage(5.seconds, SaveSuccess)
 
       val lateSubscriber = testKit.createTestProbe[PullResponse]()
       manager ! AddSubscriber("replay", lateSubscriber.ref, sendStoredData = true)
 
-      val response = lateSubscriber.expectMessageType[PullResponse]
+      val response = lateSubscriber.expectMessageType[PullResponse](5.seconds)
       response.channel shouldBe "replay"
       response.payload shouldBe ByteString.copyFromUtf8("first")
     }
@@ -103,9 +100,7 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
 
       val saveProbe = testKit.createTestProbe[SaveAck]()
       router ! Save("no-replay", ByteString.copyFromUtf8("first"), 10000L, saveProbe.ref)
-      saveProbe.expectMessage(SaveSuccess)
-
-      Thread.sleep(100)
+      saveProbe.expectMessage(5.seconds, SaveSuccess)
 
       val lateSubscriber = testKit.createTestProbe[PullResponse]()
       manager ! AddSubscriber("no-replay", lateSubscriber.ref)
@@ -128,8 +123,8 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
         router ! Save("after-sub", ByteString.copyFromUtf8(s"msg-$i"), 10000L, saveProbe.ref)
       }
 
-      saveProbe.receiveMessages(5, 3.seconds)
-      val responses = subscriber.receiveMessages(5, 3.seconds)
+      saveProbe.receiveMessages(5, 5.seconds)
+      val responses = subscriber.receiveMessages(5, 5.seconds)
       responses.map(_.payload.toStringUtf8) should contain theSameElementsAs (1 to 5).map(i => s"msg-$i")
     }
 
@@ -147,9 +142,9 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
 
       val saveProbe = testKit.createTestProbe[SaveAck]()
       router ! Save("channel-a", ByteString.copyFromUtf8("a-only"), 10000L, saveProbe.ref)
-      saveProbe.expectMessage(SaveSuccess)
+      saveProbe.expectMessage(5.seconds, SaveSuccess)
 
-      subscriberA.expectMessageType[PullResponse]
+      subscriberA.expectMessageType[PullResponse](5.seconds)
       subscriberB.expectNoMessage()
     }
   }

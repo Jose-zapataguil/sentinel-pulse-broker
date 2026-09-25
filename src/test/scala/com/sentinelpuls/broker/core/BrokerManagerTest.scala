@@ -2,7 +2,7 @@ package com.sentinelpuls.broker.core
 
 import com.sentinelpulse.broker.channels.ChannelProtocol.ChannelActorCommand
 import com.sentinelpulse.broker.core.BrokerManager
-import com.sentinelpulse.broker.core.BrokerManager.{AddSubscriber, GetOrSetActorForChannel, RegisteredChannel, UnregisteredChannel}
+import com.sentinelpulse.broker.core.BrokerManager.{AddSubscriber, GetOrSetActorForChannel, RegisteredChannel, SubscriberCount, UnregisteredChannel}
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorRef
@@ -88,26 +88,19 @@ class BrokerManagerTest extends AnyWordSpecLike with Matchers with BeforeAndAfte
       val manager = testKit.spawn(BrokerManager(2, strictOrder))
       val probe = testKit.createTestProbe[ActorRef[ChannelActorCommand]]()
 
-      manager ! GetOrSetActorForChannel("loaded", 1L, probe.ref)
-      val loadedActor = probe.receiveMessage()
+      manager ! GetOrSetActorForChannel("ch1", 1L, probe.ref)
+      val actor1 = probe.receiveMessage()
 
-      val subscriber1 = testKit.createTestProbe[PullResponse]()
-      manager ! AddSubscriber("loaded", subscriber1.ref)
+      manager ! GetOrSetActorForChannel("ch2", 1L, probe.ref)
+      val actor2 = probe.receiveMessage()
 
-      Thread.sleep(100)
-
-      manager ! GetOrSetActorForChannel("light", 1L, probe.ref)
-      val lightActor = probe.receiveMessage()
-
-      val subscriber2 = testKit.createTestProbe[PullResponse]()
-      manager ! AddSubscriber("loaded", subscriber2.ref)
-
-      Thread.sleep(200)
+      manager ! SubscriberCount(5, actor1)
+      manager ! SubscriberCount(0, actor2)
 
       manager ! GetOrSetActorForChannel("new", 1L, probe.ref)
       val chosenActor = probe.receiveMessage()
 
-      chosenActor shouldBe lightActor
+      chosenActor shouldBe actor2
     }
 
     "update channelIndex on RegisteredChannel" in {

@@ -2,6 +2,7 @@ package com.sentinelpuls.broker.api
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.api.ProducerServiceImpl
+import com.sentinelpulse.broker.config.ProducerParameters
 import com.sentinelpulse.broker.core.BrokerManager
 import com.sentinelpulse.broker.proto.{PublishMetadata, PublishRequest}
 import com.sentinelpulse.broker.proto.PublishRequest.Payload.{Data, Metadata}
@@ -28,7 +29,7 @@ class ProducerServiceImplTest extends AnyWordSpecLike with Matchers with BeforeA
 
       val manager = testKit.spawn(BrokerManager(2, "strict-order"))
 
-      val producerService = new ProducerServiceImpl(manager)
+      val producerService = new ProducerServiceImpl(manager, ProducerParameters(2.seconds, Some(8)))
 
       val payloadTest1 = ByteString.copyFromUtf8("TEST")
       val payloadTest2 = ByteString.copyFromUtf8("test")
@@ -55,7 +56,7 @@ class ProducerServiceImplTest extends AnyWordSpecLike with Matchers with BeforeA
 
       val manager = testKit.spawn(BrokerManager(2, "high-throughput"))
 
-      val producerService = new ProducerServiceImpl(manager)
+      val producerService = new ProducerServiceImpl(manager, ProducerParameters(2.seconds, Some(8)))
 
       val source = Source(
         List(
@@ -79,7 +80,7 @@ class ProducerServiceImplTest extends AnyWordSpecLike with Matchers with BeforeA
 
       val manager = testKit.spawn(BrokerManager(2, "strict-order"))
 
-      val producerService = new ProducerServiceImpl(manager)
+      val producerService = new ProducerServiceImpl(manager, ProducerParameters(2.seconds, Some(8)))
 
       val source = Source.single(PublishRequest(Data(ByteString.copyFromUtf8("no-metadata"))))
 

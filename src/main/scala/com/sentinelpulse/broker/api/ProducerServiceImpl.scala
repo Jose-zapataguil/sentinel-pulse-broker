@@ -10,22 +10,26 @@ import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 import org.apache.pekko.stream.typed.scaladsl.ActorFlow
-import org.apache.pekko.util.Timeout
 import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.config.ProducerParameters
+import org.apache.pekko.util.Timeout
 import scala.concurrent.{ExecutionContext, Future}
-import scala.concurrent.duration.DurationInt
 
-class ProducerServiceImpl(manager: ActorRef[BrokerCommand])(using system: ActorSystem[Nothing]) extends ProducerService:
-
-  given timeout: Timeout = 2.seconds
-
+class ProducerServiceImpl(manager: ActorRef[BrokerCommand], parameters: ProducerParameters)
+                         (using system: ActorSystem[Nothing]) extends ProducerService:
+  
+  given Timeout = parameters.timeout
+  
   given ExecutionContext = system.executionContext
 
   given Scheduler = system.scheduler
 
-  private val cores = Runtime.getRuntime.availableProcessors()
+  private lazy val cores = Runtime.getRuntime.availableProcessors()
 
-  private val streamParallelism = cores * 2
+  private val streamParallelism = parameters.parallelism match {
+    case Some(value) => value
+    case None => cores * 2
+  }
 
   override def push(in: Source[PublishRequest, NotUsed]): Future[PublishSummary] = {
     in.prefixAndTail(1).runWith(Sink.head)

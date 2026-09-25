@@ -1,6 +1,7 @@
 package com.sentinelpuls.broker
 
 import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.config.{BrokerParameters, ProducerParameters}
 import com.sentinelpulse.broker.core.{BrokerManager, BrokerServer}
 import com.sentinelpulse.broker.proto.PublishRequest.Payload
 import com.sentinelpulse.broker.proto.PublishRequest.Payload.Data
@@ -14,6 +15,7 @@ import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.stream.testkit.scaladsl.TestSink
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.wordspec.AnyWordSpecLike
+
 import scala.concurrent.duration.*
 import scala.concurrent.Await
 
@@ -33,7 +35,9 @@ class BrokerHighThroughputIntegrationTest extends ScalaTestWithActorTestKit(test
 
     given ActorSystem[Nothing] = system
 
-    val grpcServer = new BrokerServer(manager, ip, port)
+    val parameters = BrokerParameters(ip, port, 4, "high-throughput", ProducerParameters(2.seconds, Some(8)))
+
+    val grpcServer = new BrokerServer(manager, parameters)
     serverBinding = Await.result(grpcServer.run(), 5.seconds)
 
     val clientSettings = GrpcClientSettings
@@ -57,100 +61,78 @@ class BrokerHighThroughputIntegrationTest extends ScalaTestWithActorTestKit(test
       val testChannel = "ht-test-channel"
       val testPayload = ByteString.copyFrom("HT Test message", "UTF-8")
 
-      val subRequest = PullRequest(testChannel)
-
-      val consumerStream = consumerClient.pull(subRequest)
-
-      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
-
-      streamProbe.request(1)
-
       val publishMetadata = PublishRequest(
         Payload.Metadata(
           PublishMetadata(testChannel, 1000L)
         ))
+      val dataMessages = (1 to 10).map(_ => PublishRequest(Data(testPayload)))
+      val producerStream = Source(publishMetadata :: dataMessages.toList)
 
-      val metadataSource = Source.single(publishMetadata)
+      Await.result(producerClient.push(producerStream), 5.seconds)
 
-      val publishData = PublishRequest(Data(testPayload))
-
-      val dataSource = Source.tick(initialDelay = 0.millis, interval = 100.millis, "tick")
-        .map(_ => publishData).take(10)
-
-      val producerStream = metadataSource.concat(dataSource)
-
-      producerClient.push(producerStream)
+      val subRequest = PullRequest(testChannel, allMessages = true)
+      val consumerStream = consumerClient.pull(subRequest)
+      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
+      streamProbe.request(1)
 
       val receivedMessage = streamProbe.expectNext(5.seconds)
-
       receivedMessage.payload shouldBe testPayload
-
       streamProbe.cancel()
     }
 
     "deliver multiple messages from round-robin producers to a single consumer" in {
       val testChannel = "ht-multi-channel"
 
-      val subRequest = PullRequest(testChannel)
-
-      val consumerStream = consumerClient.pull(subRequest)
-      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
-
-      streamProbe.request(10)
-
       val publishMetadata = PublishRequest(
         Payload.Metadata(
           PublishMetadata(testChannel, 1000L)
         ))
-
       val dataMessages = (1 to 10).map { i =>
         PublishRequest(Data(ByteString.copyFromUtf8(s"Message-$i")))
       }
-
       val producerStream = Source(publishMetadata :: dataMessages.toList)
 
-      producerClient.push(producerStream)
+      Await.result(producerClient.push(producerStream), 5.seconds)
+
+      val subRequest = PullRequest(testChannel, allMessages = true)
+      val consumerStream = consumerClient.pull(subRequest)
+      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
+      streamProbe.request(10)
 
       val messages = streamProbe.within(5.seconds) {
-      streamProbe.expectNextN(10)
+        streamProbe.expectNextN(10)
       }
       messages should have size 10
-
       streamProbe.cancel()
     }
 
     "broadcast messages to multiple consumers" in {
       val testChannel = "ht-broadcast-channel"
 
-      val subRequest1 = PullRequest(testChannel)
-      val subRequest2 = PullRequest(testChannel)
-
-      val consumerStream1 = consumerClient.pull(subRequest1)
-      val consumerStream2 = consumerClient.pull(subRequest2)
-
-      val streamProbe1 = consumerStream1.runWith(TestSink[PullResponse]())
-      val streamProbe2 = consumerStream2.runWith(TestSink[PullResponse]())
-
-      streamProbe1.request(3)
-      streamProbe2.request(3)
-
       val publishMetadata = PublishRequest(
         Payload.Metadata(
           PublishMetadata(testChannel, 1000L)
         ))
-
       val dataMessages = (1 to 3).map { i =>
         PublishRequest(Data(ByteString.copyFromUtf8(s"Broadcast-$i")))
       }
-
       val producerStream = Source(publishMetadata :: dataMessages.toList)
 
-      producerClient.push(producerStream)
+      Await.result(producerClient.push(producerStream), 5.seconds)
 
-      val messages1 = streamProbe1.within(10.seconds) {
+      val subRequest1 = PullRequest(testChannel, allMessages = true)
+      val subRequest2 = PullRequest(testChannel, allMessages = true)
+
+      val streamProbe1 = consumerClient.pull(subRequest1).runWith(TestSink[PullResponse]())
+      val streamProbe2 = consumerClient.pull(subRequest2).runWith(TestSink[PullResponse]())
+
+      streamProbe1.request(3)
+      streamProbe2.request(3)
+
+      val messages1 = streamProbe1.within(5.seconds) {
         streamProbe1.expectNextN(3)
       }
-      val messages2 = streamProbe2.within(10.seconds) {
+      val messages2 = streamProbe2.within(5.seconds) {
         streamProbe2.expectNextN(3)
       }
 

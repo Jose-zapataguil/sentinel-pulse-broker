@@ -13,7 +13,7 @@ object BrokerGuardian:
 
     given ActorSystem[Nothing] = context.system
 
-    val grpcServer = new BrokerServer(manager, brokerParameters.ip, brokerParameters.port)
+    val grpcServer = new BrokerServer(manager, brokerParameters)
     grpcServer.run()
     
     context.log.info(s"Started broker at ip ${brokerParameters.ip} in port ${brokerParameters.port}")

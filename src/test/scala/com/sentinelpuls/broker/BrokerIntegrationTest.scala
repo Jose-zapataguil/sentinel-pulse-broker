@@ -1,6 +1,7 @@
 package com.sentinelpuls.broker
 
 import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.config.{BrokerParameters, ProducerParameters}
 import com.sentinelpulse.broker.core.{BrokerManager, BrokerServer}
 import com.sentinelpulse.broker.proto.PublishRequest.Payload
 import com.sentinelpulse.broker.proto.PublishRequest.Payload.Data
@@ -39,7 +40,9 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
 
     given ActorSystem[Nothing] = system
 
-    val grpcServer = new BrokerServer(manager, ip, port)
+    val parameters = BrokerParameters(ip, port, 4, "strict-order", ProducerParameters(2.seconds, Some(8)))
+
+    val grpcServer = new BrokerServer(manager, parameters)
     serverBinding = Await.result(grpcServer.run(), 5.seconds)
 
     val clientSettings = GrpcClientSettings
@@ -63,35 +66,22 @@ class BrokerIntegrationTest extends ScalaTestWithActorTestKit(testConfig) with A
       val testChannel = "test-channel"
       val testPayload = ByteString.copyFrom("Test message", "UTF-8")
 
-      val subRequest = PullRequest(testChannel)
-
-      val consumerStream = consumerClient.pull(subRequest)
-
-      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
-
-      streamProbe.request(1)
-
       val publishMetadata = PublishRequest(
         Payload.Metadata(
           PublishMetadata(testChannel, 1000L)
         ))
+      val dataMessages = (1 to 10).map(_ => PublishRequest(Data(testPayload)))
+      val producerStream = Source(publishMetadata :: dataMessages.toList)
 
-      val metadataSource = Source.single(publishMetadata)
+      Await.result(producerClient.push(producerStream), 5.seconds)
 
-      val publishData = PublishRequest(Data(testPayload))
-      
-      val dataSource = Source.tick(initialDelay = 0.millis, interval = 100.millis, "tick")
-        .map(_ => publishData).take(10)
-
-
-      val producerStream = metadataSource.concat(dataSource)
-
-      producerClient.push(producerStream)
+      val subRequest = PullRequest(testChannel, allMessages = true)
+      val consumerStream = consumerClient.pull(subRequest)
+      val streamProbe = consumerStream.runWith(TestSink[PullResponse]())
+      streamProbe.request(1)
 
       val receivedMessage = streamProbe.expectNext(5.seconds)
-
       receivedMessage.payload shouldBe testPayload
-
       streamProbe.cancel()
     }
   }
