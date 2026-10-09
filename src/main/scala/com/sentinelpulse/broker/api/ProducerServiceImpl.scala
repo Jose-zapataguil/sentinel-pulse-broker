@@ -1,7 +1,7 @@
 package com.sentinelpulse.broker.api
 
 import com.sentinelpulse.broker.channels.ChannelProtocol
-import com.sentinelpulse.broker.channels.ChannelProtocol.{ChannelActorCommand, Save, SaveAck}
+import com.sentinelpulse.broker.channels.ChannelProtocol.{ChannelActorCommand, Save, SaveAck, SaveFailure, SaveSuccess}
 import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, GetOrSetActorForChannel}
 import com.sentinelpulse.broker.proto.{ProducerService, PublishRequest, PublishSummary}
 import org.apache.pekko.NotUsed
@@ -49,9 +49,12 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand], parameters: Producer
                   .via(ActorFlow.ask[ByteString, ChannelActorCommand, SaveAck](streamParallelism)(channelActor) {
                     (bytes, ref) => Save(value.channel, bytes, value.ttl, ref)
                   })
-                  .runFold(0) { (count, result) =>
-                    count + 1
-                  }.map(total => PublishSummary(success = true, count = total))
+                  .runFold(PublishSummary(success = true)) { (summary, result) =>
+                    result match
+                      case SaveSuccess => summary.withCount(summary.count + 1)
+                      case SaveFailure => summary.withSuccess(false)
+                        .withErrorMessage("One or more messages were rejected: channel queue is full")
+                  }
               }
             case None =>
               Future.failed(new IllegalArgumentException("The first message should contains the metadata (channel and ttl)"))

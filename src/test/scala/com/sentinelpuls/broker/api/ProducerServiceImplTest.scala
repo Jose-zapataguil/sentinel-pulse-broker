@@ -2,7 +2,7 @@ package com.sentinelpuls.broker.api
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.api.ProducerServiceImpl
-import com.sentinelpulse.broker.config.ProducerParameters
+import com.sentinelpulse.broker.config.{OverflowPolicy, ProducerParameters}
 import com.sentinelpulse.broker.core.BrokerManager
 import com.sentinelpulse.broker.proto.{PublishMetadata, PublishRequest}
 import com.sentinelpulse.broker.proto.PublishRequest.Payload.{Data, Metadata}
@@ -90,6 +90,30 @@ class ProducerServiceImplTest extends AnyWordSpecLike with Matchers with BeforeA
         Await.result(future, 1.second)
       }
       exception.getMessage should include("metadata")
+    }
+
+    "report an unsuccessful summary when messages are rejected" in {
+
+      given ActorSystem[Nothing] = testKit.system
+
+      val manager = testKit.spawn(BrokerManager(2, "strict-order", queueMaxSize = 2, overflowPolicy = OverflowPolicy.Reject))
+
+      val producerService = new ProducerServiceImpl(manager, ProducerParameters(2.seconds, Some(1)))
+
+      val source = Source(
+        List(
+          PublishRequest(Metadata(PublishMetadata("reject-channel", 10000L))),
+          PublishRequest(Data(ByteString.copyFromUtf8("1"))),
+          PublishRequest(Data(ByteString.copyFromUtf8("2"))),
+          PublishRequest(Data(ByteString.copyFromUtf8("3")))
+        )
+      )
+
+      val summary = Await.result(producerService.push(source), 5.seconds)
+
+      summary.success shouldBe false
+      summary.count shouldBe 2
+      summary.errorMessage should include("rejected")
     }
   }
 

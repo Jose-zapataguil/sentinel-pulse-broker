@@ -43,6 +43,9 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
 
       val subscriber = testKit.createTestProbe[PullResponse]()
       manager ! AddSubscriber("early-sub", subscriber.ref)
+      
+      manager ! GetOrSetActorForChannel("early-sub", 1L, routerProbe.ref)
+      routerProbe.receiveMessage()
 
       val saveProbe = testKit.createTestProbe[SaveAck]()
       router ! Save("early-sub", ByteString.copyFromUtf8("hello"), 10000L, saveProbe.ref)
@@ -118,6 +121,9 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
       val subscriber = testKit.createTestProbe[PullResponse]()
       manager ! AddSubscriber("after-sub", subscriber.ref)
 
+      manager ! GetOrSetActorForChannel("after-sub", 1L, routerProbe.ref)
+      routerProbe.receiveMessage()
+
       val saveProbe = testKit.createTestProbe[SaveAck]()
       (1 to 5).foreach { i =>
         router ! Save("after-sub", ByteString.copyFromUtf8(s"msg-$i"), 10000L, saveProbe.ref)
@@ -139,6 +145,9 @@ class BrokerManagerHighThroughputTest extends AnyWordSpecLike with Matchers with
       val subscriberB = testKit.createTestProbe[PullResponse]()
       manager ! AddSubscriber("channel-a", subscriberA.ref)
       manager ! AddSubscriber("channel-b", subscriberB.ref)
+
+      manager ! GetOrSetActorForChannel("channel-a", 1L, routerProbe.ref)
+      routerProbe.receiveMessage()
 
       val saveProbe = testKit.createTestProbe[SaveAck]()
       router ! Save("channel-a", ByteString.copyFromUtf8("a-only"), 10000L, saveProbe.ref)

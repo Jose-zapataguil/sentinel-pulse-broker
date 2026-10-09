@@ -2,7 +2,8 @@ package com.sentinelpuls.broker.channels
 
 import com.google.protobuf.ByteString
 import com.sentinelpulse.broker.channels.ChannelActor
-import com.sentinelpulse.broker.channels.ChannelProtocol.{Save, SaveAck, SaveSuccess, Subscribe}
+import com.sentinelpulse.broker.channels.ChannelProtocol.{Save, SaveAck, SaveFailure, SaveSuccess, Subscribe}
+import com.sentinelpulse.broker.config.OverflowPolicy
 import com.sentinelpulse.broker.core.BrokerManager.{BrokerCommand, RegisteredChannel, SubscriberCount, UnregisteredChannel}
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.testkit.typed.scaladsl.{ActorTestKit, ManualTime}
@@ -219,6 +220,140 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       val response = subscriber.expectMessageType[PullResponse]
       response.payload shouldBe ByteString.copyFromUtf8("new")
       subscriber.expectNoMessage()
+    }
+
+    "reject a Save with SaveFailure when the queue is full and policy is Reject" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 2, overflowPolicy = OverflowPolicy.Reject))
+      val producer = testKit.createTestProbe[SaveAck]()
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      channelActor ! Save("test", ByteString.copyFromUtf8("3"), 10000L, producer.ref)
+      producer.expectMessage(SaveFailure)
+    }
+
+    "preserve the existing contiguous prefix when rejecting" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 2, overflowPolicy = OverflowPolicy.Reject))
+      val producer = testKit.createTestProbe[SaveAck]()
+      val subscriber = testKit.createTestProbe[PullResponse]()
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      channelActor ! Save("test", ByteString.copyFromUtf8("3"), 10000L, producer.ref)
+      producer.expectMessage(SaveFailure)
+
+      channelActor ! Subscribe("test", subscriber.ref, true)
+
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("2")))
+      subscriber.expectNoMessage()
+    }
+
+    "not broadcast a rejected message to subscribers" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 1, overflowPolicy = OverflowPolicy.Reject))
+      val producer = testKit.createTestProbe[SaveAck]()
+      val subscriber = testKit.createTestProbe[PullResponse]()
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+      producer.expectMessage(SaveFailure)
+      subscriber.expectNoMessage()
+    }
+
+    "accept new messages after the queue drains through TTL expiry" in {
+      val localTestKit = ActorTestKit(ManualTime.config)
+      val manualTime = ManualTime()(localTestKit.internalSystem)
+      val manager = localTestKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = localTestKit.spawn(ChannelActor(manager, queueMaxSize = 1, overflowPolicy = OverflowPolicy.Reject))
+      val producer = localTestKit.createTestProbe[SaveAck]()
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 1L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 1L, producer.ref)
+      producer.expectMessage(SaveFailure)
+
+      manualTime.timePasses(2.minutes)
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("3"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+    }
+
+    "drop the oldest message when the queue exceeds the limit" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 2, overflowPolicy = OverflowPolicy.DropOldest))
+      val producer = testKit.createTestProbe[SaveAck]()
+      val subscriber = testKit.createTestProbe[PullResponse]()
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      channelActor ! Save("test", ByteString.copyFromUtf8("3"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+
+      channelActor ! Subscribe("test", subscriber.ref, true)
+
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("2")))
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("3")))
+      subscriber.expectNoMessage()
+    }
+
+    "keep only the newest messages after multiple evictions" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 2, overflowPolicy = OverflowPolicy.DropOldest))
+      val producer = testKit.createTestProbe[SaveAck]()
+      val subscriber = testKit.createTestProbe[PullResponse]()
+
+      (1 to 5).foreach { i =>
+        channelActor ! Save("test", ByteString.copyFromUtf8(s"msg-$i"), 10000L, producer.ref)
+        producer.expectMessage(SaveSuccess)
+      }
+
+      channelActor ! Subscribe("test", subscriber.ref, true)
+
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("msg-4")))
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("msg-5")))
+      subscriber.expectNoMessage()
+    }
+
+    "never reject a Save when policy is DropOldest" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 1, overflowPolicy = OverflowPolicy.DropOldest))
+      val producer = testKit.createTestProbe[SaveAck]()
+
+      (1 to 5).foreach { i =>
+        channelActor ! Save("test", ByteString.copyFromUtf8(s"msg-$i"), 10000L, producer.ref)
+        producer.expectMessage(SaveSuccess)
+      }
+    }
+
+    "still deliver the newest message to live subscribers when evicting the oldest" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, queueMaxSize = 1, overflowPolicy = OverflowPolicy.DropOldest))
+      val producer = testKit.createTestProbe[SaveAck]()
+      val subscriber = testKit.createTestProbe[PullResponse]()
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("2")))
     }
   }
 

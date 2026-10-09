@@ -1,6 +1,7 @@
 package com.sentinelpuls.broker
 
 import com.google.protobuf.ByteString
+import com.sentinelpulse.broker.config.OverflowPolicy.DropOldest
 import com.sentinelpulse.broker.config.{BrokerParameters, ProducerParameters}
 import com.sentinelpulse.broker.core.{BrokerManager, BrokerServer}
 import com.sentinelpulse.broker.proto.PublishRequest.Payload
@@ -35,7 +36,7 @@ class BrokerHighThroughputIntegrationTest extends ScalaTestWithActorTestKit(test
 
     given ActorSystem[Nothing] = system
 
-    val parameters = BrokerParameters(ip, port, 4, "high-throughput", ProducerParameters(2.seconds, Some(8)))
+    val parameters = BrokerParameters(ip, port, 4, "high-throughput", 100 ,ProducerParameters(2.seconds, Some(8)), DropOldest)
 
     val grpcServer = new BrokerServer(manager, parameters)
     serverBinding = Await.result(grpcServer.run(), 5.seconds)

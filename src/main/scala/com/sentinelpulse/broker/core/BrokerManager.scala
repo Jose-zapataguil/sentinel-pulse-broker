@@ -2,6 +2,7 @@ package com.sentinelpulse.broker.core
 
 import com.sentinelpulse.broker.channels.ChannelActor
 import com.sentinelpulse.broker.channels.ChannelProtocol.{Channel, ChannelActorCommand, Subscribe}
+import com.sentinelpulse.broker.config.OverflowPolicy
 import com.sentinelpulse.broker.proto.PullResponse
 import org.apache.pekko.actor.typed.scaladsl.{Behaviors, Routers}
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
@@ -25,10 +26,10 @@ object BrokerManager:
                     actorStats: Map[ActorRef[ChannelActorCommand], Int],
                   )
 
-  def apply(numberOfActors: Int, storageMode: String): Behavior[BrokerCommand] = Behaviors.setup { context =>
+  def apply(numberOfActors: Int, storageMode: String, queueMaxSize: Int = Int.MaxValue, overflowPolicy: OverflowPolicy = OverflowPolicy.DropOldest): Behavior[BrokerCommand] = Behaviors.setup { context =>
     if (storageMode == "high-throughput") {
       context.log.info(s"Starting broker in $storageMode mode")
-      val pool = Routers.pool(numberOfActors)(ChannelActor(context.self))
+      val pool = Routers.pool(numberOfActors)(ChannelActor(context.self, queueMaxSize, overflowPolicy))
         .withBroadcastPredicate {
           case _: Subscribe => true
           case _ => false
@@ -37,7 +38,7 @@ object BrokerManager:
       highThroughputBehavior(routerRef, Map.empty)
     } else {
       val channelActors = 0 until numberOfActors map { n =>
-        context.spawn(ChannelActor(context.self), s"actor$n")
+        context.spawn(ChannelActor(context.self, queueMaxSize, overflowPolicy), s"actor$n")
       }
       val initialStats = channelActors.map(_ -> 0).toMap
       strictOrderBehavior(State(Map.empty, initialStats))
