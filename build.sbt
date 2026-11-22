@@ -1,11 +1,11 @@
-ThisBuild / version := "0.1.0-SNAPSHOT"
+ThisBuild / version := "1.0.0-SNAPSHOT"
 
 ThisBuild / scalaVersion := "3.3.4"
 
 
 val pekkoVersion = "1.4.0"
 val pekkoGrpcVersion = "1.2.0"
-val logbackVersion = "1.5.32"
+val logbackVersion = "1.6.6"
 
 lazy val root = (project in file("."))
   .enablePlugins(org.apache.pekko.grpc.sbt.PekkoGrpcPlugin, JavaAppPackaging, DockerPlugin)
@@ -24,6 +24,7 @@ lazy val root = (project in file("."))
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
 
     ),
+    dockerRepository := Some("ghcr.io/Jose-zapataguil"),
     // Docker configuration (sbt-native-packager)
     dockerBaseImage := "eclipse-temurin:21.0.10_7-jre",
     Docker / packageName := "sentinel-pulse-broker",
