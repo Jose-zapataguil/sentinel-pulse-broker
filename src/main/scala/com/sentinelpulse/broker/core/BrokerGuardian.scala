@@ -14,7 +14,8 @@ object BrokerGuardian:
         brokerParameters.nOfActors,
         brokerParameters.storageMode,
         brokerParameters.maxMsgPerChannel,
-        brokerParameters.overflowPolicy
+        brokerParameters.overflowPolicy,
+        brokerParameters.maxPendingMsg,
       ),
       "broker-manager"
     )

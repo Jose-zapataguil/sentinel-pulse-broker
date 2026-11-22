@@ -13,6 +13,7 @@ case class BrokerParameters(ip: String,
                             storageMode: String,
                             maxMsgPerChannel: Int,
                             producerParameters: ProducerParameters,
+                            maxPendingMsg: Int,
                             overflowPolicy: OverflowPolicy
                            )
 
@@ -22,7 +23,14 @@ object BrokerParameters:
   def validate(params: BrokerParameters): Either[String, BrokerParameters] =
     params.storageMode match {
       case "strict-order" =>
-        Right(params)
+        params.overflowPolicy match {
+          case OverflowPolicy.Backpressure(timeout) =>
+            if params.producerParameters.timeout > timeout then
+              Right(params)
+            else
+              Left("the producer timeout cannot be less than the backpressure timeout")
+          case _ => Right(params)
+        }
       case "high-throughput" =>
         params.overflowPolicy match {
           case _: OverflowPolicy.Backpressure =>

@@ -36,7 +36,7 @@ class BrokerHighThroughputIntegrationTest extends ScalaTestWithActorTestKit(test
 
     given ActorSystem[Nothing] = system
 
-    val parameters = BrokerParameters(ip, port, 4, "high-throughput", 100 ,ProducerParameters(2.seconds, Some(8)), DropOldest)
+    val parameters = BrokerParameters(ip, port, 4, "high-throughput", 100, ProducerParameters(2.seconds, Some(8)), 1000, DropOldest)
 
     val grpcServer = new BrokerServer(manager, parameters)
     serverBinding = Await.result(grpcServer.run(), 5.seconds)

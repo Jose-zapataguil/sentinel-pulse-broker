@@ -26,11 +26,8 @@ class ProducerServiceImpl(manager: ActorRef[BrokerCommand], parameters: Producer
 
   private lazy val cores = Runtime.getRuntime.availableProcessors()
 
-  private val streamParallelism = parameters.parallelism match {
-    case Some(value) => value
-    case None => cores * 2
-  }
-
+  private val streamParallelism = parameters.parallelism.getOrElse(cores * 2)
+  
   override def push(in: Source[PublishRequest, NotUsed]): Future[PublishSummary] = {
     in.prefixAndTail(1).runWith(Sink.head)
       .flatMap {

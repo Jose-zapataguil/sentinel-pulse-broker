@@ -1,8 +1,9 @@
 package com.sentinelpuls.broker
 
 import com.sentinelpulse.broker.Broker
+import com.sentinelpulse.broker.config.OverflowPolicy.Backpressure
 import com.sentinelpulse.broker.config.{BrokerParameters, OverflowPolicy, ProducerParameters}
-import com.typesafe.config.ConfigFactory
+import com.typesafe.config.{Config, ConfigFactory}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
 
@@ -18,6 +19,7 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
       |  actors = 4
       |  mode = "strict-order"
       |  max-messages-per-channel = 10000
+      |  max-pending-messages = 1000
       |  overflowPolicy = "drop-oldest"
       |  producer {
       |    timeout = 2 seconds
@@ -25,7 +27,7 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
       |}
       |""".stripMargin
 
-  private def configWith(overrides: String): com.typesafe.config.Config =
+  private def configWith(overrides: String): Config =
     ConfigFactory.parseString(overrides)
       .withFallback(ConfigFactory.parseString(baseConfig))
 
@@ -51,6 +53,7 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
       params.maxMsgPerChannel shouldBe 10000
       params.producerParameters.timeout shouldBe 2.seconds
       params.producerParameters.parallelism shouldBe Some(16)
+      params.maxPendingMsg shouldBe 1000
       params.overflowPolicy shouldBe OverflowPolicy.DropOldest
     }
 
@@ -111,7 +114,7 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
   }
 
   "BrokerParameters.validate" should {
-    val producerParams = ProducerParameters(2.seconds, Some(8))
+    val producerParams = ProducerParameters(3.seconds, Some(8))
 
     "accept any policy in strict-order mode" in {
       val policies = List(
@@ -122,7 +125,7 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
 
       policies.foreach { policy =>
         val params = BrokerParameters(
-          "127.0.0.1", 8080, 4, "strict-order", 10000, producerParams, policy
+          "127.0.0.1", 8080, 4, "strict-order", 10000, producerParams, 1000, policy
         )
         val result = BrokerParameters.validate(params)
         result shouldBe a[Right[_, _]]
@@ -131,21 +134,21 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
 
     "accept drop-oldest in high-throughput mode" in {
       val params = BrokerParameters(
-        "127.0.0.1", 8080, 4, "high-throughput", 10000, producerParams, OverflowPolicy.DropOldest
+        "127.0.0.1", 8080, 4, "high-throughput", 10000, producerParams, 1000, OverflowPolicy.DropOldest
       )
       BrokerParameters.validate(params) shouldBe a[Right[_, _]]
     }
 
     "accept reject in high-throughput mode" in {
       val params = BrokerParameters(
-        "127.0.0.1", 8080, 4, "high-throughput", 10000, producerParams, OverflowPolicy.Reject
+        "127.0.0.1", 8080, 4, "high-throughput", 10000, producerParams, 1000, OverflowPolicy.Reject
       )
       BrokerParameters.validate(params) shouldBe a[Right[_, _]]
     }
 
     "reject backpressure in high-throughput mode" in {
       val params = BrokerParameters(
-        "127.0.0.1", 8080, 4, "high-throughput", 10000, producerParams, OverflowPolicy.Backpressure(2.seconds)
+        "127.0.0.1", 8080, 4, "high-throughput", 10000, producerParams, 1000, OverflowPolicy.Backpressure(2.seconds)
       )
       val result = BrokerParameters.validate(params)
       result shouldBe a[Left[_, _]]
@@ -154,11 +157,20 @@ class BrokerConfigTest extends AnyWordSpecLike with Matchers:
 
     "reject unknown storage mode" in {
       val params = BrokerParameters(
-        "127.0.0.1", 8080, 4, "unknown-mode", 10000, producerParams, OverflowPolicy.DropOldest
+        "127.0.0.1", 8080, 4, "unknown-mode", 10000, producerParams, 1000, OverflowPolicy.DropOldest
       )
       val result = BrokerParameters.validate(params)
       result shouldBe a[Left[_, _]]
       result.left.getOrElse(fail("Expected Left but got Right")) should include("Unknown storage mode")
+    }
+
+    "reject when the backpressure timeout is greater than the producer timeout" in {
+      val params = BrokerParameters(
+        "127.0.0.1", 8080, 4, "strict-order",  1000, producerParams, 1000, OverflowPolicy.Backpressure(4.seconds)
+      )
+      val result = BrokerParameters.validate(params)
+      result shouldBe a[Left[_, _]]
+      result.left.getOrElse(fail("Expected Left but got Right")) should include("the producer timeout cannot be less than the backpressure timeout")
     }
   }
 

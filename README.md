@@ -1,6 +1,6 @@
 # Sentinel Pulse Broker
 
-A distributed message broker built with Apache Pekko and gRPC, implementing a pub/sub pattern with support for multiple channels, message TTL, and load balancing.
+A distributed message broker built with Apache Pekko and gRPC, implementing a pub/sub pattern with support for multiple channels, message TTL, and two operational modes: **strict-order** and **high-throughput**.
 
 ## Overview
 
@@ -10,6 +10,9 @@ Sentinel Pulse Broker is a high-performance message broker that enables asynchro
 
 - **Multi-Channel Pub/Sub**: Publish and subscribe to multiple distinct channels
 - **TTL Support**: Messages can be configured with Time-To-Live expiration
+- **Two Operational Modes**:
+  - **Strict-Order**: Per-channel ordering with least-loaded actor assignment
+  - **High-Throughput**: Round-robin distribution across an actor pool (no ordering guarantee)
 - **Load Balancing**: Distributes channels across multiple actor instances
 - **Message Persistence**: Stores messages in memory with configurable expiration
 - **Historical Data**: New subscribers can receive previously stored messages
@@ -18,25 +21,41 @@ Sentinel Pulse Broker is a high-performance message broker that enables asynchro
 
 ## Architecture
 
+### Strict-Order Mode
+
+Each channel is assigned to a single `ChannelActor` based on least-loaded heuristics. Messages within a channel are processed in order.
+
 ```mermaid
 graph TD
     BS[BrokerServer<br/>gRPC] --> PS[ProducerService]
     BS --> CS[ConsumerService]
     PS --> BM[BrokerManager]
     CS --> BM
-    BM -->|"Load Balancing"| CA1[ChannelActor 1]
-    BM -->|"Load Balancing"| CA2[ChannelActor 2]
-    BM -->|"Load Balancing"| CA3[ChannelActor N]
-    CA1 ~~~ P1[Producer] -->|"Pub"| CA1
-    P1[Producer] ~~~ CA1
-    CA1[ChannelActor 1] --> |"Sub"| C1[Consumer]
-    CA2 ~~~ P2[Producer] -->|"Pub"| CA2
-    P2[Producer] ~~~ CA2
-    CA2[ChannelActor 2] --> |"Sub"| C2[Consumer]
-    CA3 ~~~ P3[Producer] -->|"Pub"| CA3
-    P3[Producer] ~~~ CA3
-    CA3[ChannelActor N] --> |"Sub"| C3[Consumer]
+    BM -->|"Least Loaded"| CA1[ChannelActor 1]
+    BM -->|"Least Loaded"| CA2[ChannelActor 2]
+    BM -->|"Least Loaded"| CA3[ChannelActor N]
+    CA1 --> |"Sub"| C1[Consumer]
+    CA2 --> |"Sub"| C2[Consumer]
+    CA3 --> |"Sub"| C3[Consumer]
+```
 
+### High-Throughput Mode
+
+Messages for all channels are round-robined across a pool of `ChannelActor`s. Consumer subscriptions are broadcast to the entire pool.
+
+```mermaid
+graph TD
+    BS[BrokerServer<br/>gRPC] --> PS[ProducerService]
+    BS --> CS[ConsumerService]
+    PS --> BM[BrokerManager]
+    CS --> BM
+    BM --> R[Router<br/>Round Robin]
+    R --> CA1[ChannelActor 1]
+    R --> CA2[ChannelActor 2]
+    R --> CA3[ChannelActor N]
+    CA1 --> |"Sub"| C1[Consumer]
+    CA2 --> |"Sub"| C2[Consumer]
+    CA3 --> |"Sub"| C3[Consumer]
 ```
 
 ### Core Components
@@ -44,8 +63,8 @@ graph TD
 - **BrokerServer**: gRPC server handling incoming requests
 - **ProducerService**: Handles message publishing
 - **ConsumerService**: Handles message consumption/subscription
-- **BrokerManager**: Manages channel actor pool and load distribution
-- **ChannelActors**: Individual actors handling message storage and delivery per channel
+- **BrokerManager**: Manages actor pool and load distribution (mode-dependent)
+- **ChannelActors**: Individual actors handling message storage and delivery
 
 ## Technology Stack
 
@@ -65,14 +84,43 @@ broker {
   ip = "0.0.0.0"
   port = 8080
   actors = 4
+  mode = "strict-order"  # or "high-throughput"
+
+  producer {
+    timeout = 2s
+    parallelism = 8
+  }
 }
 ```
 
-| Parameter       | Description                                      | Default   |
-|-----------------|--------------------------------------------------|-----------|
-| `broker.ip`     | IP address to bind                               | `0.0.0.0` |
-| `broker.port`   | Port number                                      | `8080`    |
-| `broker.actors` | Number of actors to store the different channels | `4`       |
+| Parameter                     | Description                          | Default        |
+|-------------------------------|--------------------------------------|----------------|
+| `broker.ip`                   | IP address to bind                   | `0.0.0.0`      |
+| `broker.port`                 | Port number                          | `8080`         |
+| `broker.actors`               | Number of actors in the pool         | `4`            |
+| `broker.mode`                 | `strict-order` or `high-throughput`  | `strict-order` |
+| `broker.producer.timeout`     | Ask timeout for producer messages    | `2s`           |
+| `broker.producer.parallelism` | Parallelism for producer stream asks | `cores * 2`    |
+
+Environment variables override:
+- `BROKER_IP`
+- `BROKER_PORT`
+- `BROKER_ACTORS`
+- `BROKER_STORAGE_MODE`
+
+## Operational Modes
+
+### Strict-Order Mode
+
+- **Best for**: State machines, event sourcing, replication, ordered processing.
+- **Behavior**: One actor per channel. Messages within a channel are delivered in publication order.
+- **Routing**: `BrokerManager` assigns channels to the least-loaded actor and tracks assignments in `channelIndex`.
+
+### High-Throughput Mode
+
+- **Best for**: Metrics, logs, telemetry, fire-and-forget events where order does not matter.
+- **Behavior**: Messages are round-robined across the entire actor pool. No ordering guarantee.
+- **Routing**: A Pekko `PoolRouter` with `withBroadcastPredicate` handles both round-robin publishing and broadcast subscription.
 
 ## API
 

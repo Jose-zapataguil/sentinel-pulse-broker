@@ -1,6 +1,7 @@
 package com.sentinelpuls.broker.channels
 
 import com.google.protobuf.ByteString
+import com.sentinelpuls.broker.utils.MutableClock
 import com.sentinelpulse.broker.channels.ChannelActor
 import com.sentinelpulse.broker.channels.ChannelProtocol.{Save, SaveAck, SaveFailure, SaveSuccess, Subscribe}
 import com.sentinelpulse.broker.config.OverflowPolicy
@@ -11,6 +12,8 @@ import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpecLike
+
+import java.time.Instant
 import scala.concurrent.duration.DurationInt
 
 class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Matchers:
@@ -355,8 +358,142 @@ class ChannelActorTest extends AnyWordSpecLike with BeforeAndAfterAll with Match
       producer.expectMessage(SaveSuccess)
       subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("2")))
     }
+
+    "defer a message when the limit of messages for channel is reached" in {
+      val manager = testKit.spawn(Behaviors.ignore[BrokerCommand])
+      val channelActor = testKit.spawn(ChannelActor(manager, 1, OverflowPolicy.Backpressure(2.seconds)))
+      val producer = testKit.createTestProbe[SaveAck]()
+      val subscriber = testKit.createTestProbe[PullResponse]()
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 1000L, producer.ref)
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 1000L, producer.ref)
+      producer.expectNoMessage()
+      subscriber.expectNoMessage()
+    }
+
+    "reject a message when the limit of messages for channel and the timeout is reached" in {
+      val clock = MutableClock(Instant.EPOCH)
+      val localTestKit = ActorTestKit(ManualTime.config)
+      val manualTime = ManualTime()(localTestKit.internalSystem)
+      val manager = localTestKit.createTestProbe[BrokerCommand]()
+      val channelActor = localTestKit.spawn(ChannelActor(manager.ref, 1, OverflowPolicy.Backpressure(1.seconds), 100, clock))
+      val subscriber = localTestKit.createTestProbe[PullResponse]()
+      val producer = localTestKit.createTestProbe[SaveAck]()
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+
+      producer.expectNoMessage()
+      subscriber.expectNoMessage()
+
+      clock.advanceBy(2.seconds)
+      manualTime.timePasses(1.seconds)
+
+      producer.expectMessage(SaveFailure)
+      subscriber.expectNoMessage()
+    }
+
+    "reject a message when the limit of messages for channel and the limit for pending messages is reached" in {
+      val clock = MutableClock(Instant.EPOCH)
+      val localTestKit = ActorTestKit(ManualTime.config)
+      val manualTime = ManualTime()(localTestKit.internalSystem)
+      val manager = localTestKit.createTestProbe[BrokerCommand]()
+      val channelActor = localTestKit.spawn(ChannelActor(manager.ref, 1, OverflowPolicy.Backpressure(1.seconds), 1, clock))
+      val subscriber = localTestKit.createTestProbe[PullResponse]()
+      val producer = localTestKit.createTestProbe[SaveAck]()
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 10000L, producer.ref)
+
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+
+      producer.expectNoMessage()
+      subscriber.expectNoMessage()
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("3"), 10000L, producer.ref)
+
+      producer.expectMessage(SaveFailure)
+      subscriber.expectNoMessage()
+
+      clock.advanceBy(2.seconds)
+      manualTime.timePasses(1.seconds)
+
+      producer.expectMessage(SaveFailure)
+      subscriber.expectNoMessage()
+
+    }
+
+    "defer a message and free it when the queue have space" in {
+      val clock = MutableClock(Instant.EPOCH)
+      val localTestKit = ActorTestKit(ManualTime.config)
+      val manualTime = ManualTime()(localTestKit.internalSystem)
+      val manager = localTestKit.createTestProbe[BrokerCommand]()
+      val channelActor = localTestKit.spawn(ChannelActor(manager.ref, 1, OverflowPolicy.Backpressure(2.seconds), 1, clock))
+      val subscriber = localTestKit.createTestProbe[PullResponse]()
+      val producer = localTestKit.createTestProbe[SaveAck]()
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+      channelActor ! Save("test", ByteString.copyFromUtf8("1"), 100L, producer.ref)
+
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("1")))
+
+      channelActor ! Save("test", ByteString.copyFromUtf8("2"), 10000L, producer.ref)
+
+
+      clock.advanceBy(500.millis)
+      manualTime.timePasses(2.second)
+
+      producer.expectMessage(SaveSuccess)
+      subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8("2")))
+    }
+
+    "defer multiple messages and free up the number of available messages" in {
+      val clock = MutableClock(Instant.EPOCH)
+      val localTestKit = ActorTestKit(ManualTime.config)
+      val manualTime = ManualTime()(localTestKit.internalSystem)
+      val manager = localTestKit.createTestProbe[BrokerCommand]()
+      val channelActor = localTestKit.spawn(ChannelActor(manager.ref, 5, OverflowPolicy.Backpressure(2.seconds), 10, clock))
+      val subscriber = localTestKit.createTestProbe[PullResponse]()
+      val producer = localTestKit.createTestProbe[SaveAck]()
+
+
+      channelActor ! Subscribe("test", subscriber.ref, false)
+
+      (1 to 5).foreach(i => {
+        channelActor ! Save("test", ByteString.copyFromUtf8(s"msg-$i"), 100L, producer.ref)
+        producer.expectMessage(SaveSuccess)
+        subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8(s"msg-$i")))
+      })
+
+      clock.advanceBy(100.millis)
+
+      (6 to 15).foreach(i => {
+        channelActor ! Save("test", ByteString.copyFromUtf8(s"msg-$i"), 100L, producer.ref)
+        producer.expectNoMessage()
+        subscriber.expectNoMessage()
+      })
+
+      clock.advanceBy(50.millis)
+      manualTime.timePasses(2.seconds)
+
+      (6 to 10).foreach(i => {
+        channelActor ! Save("test", ByteString.copyFromUtf8(s"msg-$i"), 100L, producer.ref)
+        producer.expectMessage(SaveSuccess)
+        subscriber.expectMessage(PullResponse("test", ByteString.copyFromUtf8(s"msg-$i")))
+      })
+
   }
-
-
-
-
+}

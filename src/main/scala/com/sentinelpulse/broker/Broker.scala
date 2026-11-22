@@ -35,9 +35,10 @@ object Broker:
     val producerParallelism = getOptionalInt(conf, "broker.producer.parallelism")
     val maxQueueSize = conf.getInt("broker.max-messages-per-channel")
     val producerParameters = ProducerParameters(producerTimeout, producerParallelism)
+    val maxPendingSize = conf.getInt("broker.max-pending-messages")
 
     getOverflowPolicy(conf)
-      .map(BrokerParameters(ip, port, nOfActors, storageMode, maxQueueSize, producerParameters, _))
+      .map(BrokerParameters(ip, port, nOfActors, storageMode, maxQueueSize, producerParameters, maxPendingSize, _))
 
 
   def getOverflowPolicy(conf: Config): Either[String, OverflowPolicy] = conf.getString("broker.overflowPolicy") match {
