@@ -24,7 +24,7 @@ lazy val root = (project in file("."))
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
 
     ),
-    dockerRepository := Some("ghcr.io/Jose-zapataguil"),
+    dockerRepository := Some("ghcr.io/jose-zapataguil"),
     // Docker configuration (sbt-native-packager)
     dockerBaseImage := "eclipse-temurin:21.0.10_7-jre",
     Docker / packageName := "sentinel-pulse-broker",
